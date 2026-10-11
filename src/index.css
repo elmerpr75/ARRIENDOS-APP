@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@media print {
+  html, body {
+    background: white !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* When printing with an open modal or report, hide background app elements so they never create extra pages */
+  body.invoice-modal-open header,
+  body.invoice-modal-open nav,
+  body.invoice-modal-open main,
+  body.is-printing-document header,
+  body.is-printing-document nav,
+  body.is-printing-document main:not(:has(.current-print-target)),
+  body:has(#printable-invoice) header,
+  body:has(#printable-invoice) nav,
+  body:has(#printable-invoice) main {
+    display: none !important;
+  }
+
+  /* Reset fixed positioning so modal does not repeat across multiple printed pages */
+  body.invoice-modal-open .fixed.inset-0,
+  body.is-printing-document .fixed.inset-0,
+  body:has(#printable-invoice) .fixed.inset-0 {
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body.invoice-modal-open .fixed.inset-0 > div,
+  body.is-printing-document .fixed.inset-0 > div,
+  body:has(#printable-invoice) .fixed.inset-0 > div {
+    display: block !important;
+    max-height: none !important;
+    height: auto !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: transparent !important;
+  }
+
+  .print-container,
+  #printable-invoice,
+  #printable-report {
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+

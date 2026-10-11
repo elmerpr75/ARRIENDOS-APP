@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f8fafc" />
+    </linearGradient>
+  </defs>
+
+  <!-- Clean rounded icon canvas -->
+  <rect width="512" height="512" rx="100" fill="url(#bgGrad)" stroke="#e2e8f0" stroke-width="8" />
+
+  <!-- Casa S&F Green Line Art (Pine tree, House, Door, Ground line and grass) -->
+  <g transform="translate(48, 140) scale(0.85)" stroke="#7fa848" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Ground line extending from left -->
+    <path d="M 0 280 L 80 280" />
+
+    <!-- Pine Tree -->
+    <!-- Tree Trunk / Base -->
+    <path d="M 75 280 L 85 280 M 80 280 L 80 260" />
+    <!-- Tree body & branches (continuous sketch style) -->
+    <path d="M 50 260 L 110 260 L 98 210 L 114 210 L 96 160 L 110 160 L 80 80 L 50 160 L 64 160 L 46 210 L 62 210 L 50 260 Z" fill="#7fa848" fill-opacity="0.08" />
+
+    <!-- Ground segment between tree and house -->
+    <path d="M 80 280 L 180 280" />
+
+    <!-- House Outline -->
+    <!-- Left wall, roof eaves, roof pitch, right eaves, right wall -->
+    <path d="M 180 280 L 180 180 L 160 180 L 260 50 L 360 180 L 340 180 L 340 280" />
+
+    <!-- House Door -->
+    <path d="M 235 280 L 235 195 L 285 195 L 285 280" />
+
+    <!-- Ground & Grass Tufts to the right -->
+    <path d="M 340 280 L 370 280 L 375 240 L 385 280 L 395 235 L 405 280 L 415 250 L 425 280 L 490 280" />
+  </g>
+</svg>
