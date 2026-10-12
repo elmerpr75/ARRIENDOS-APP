@@ -56,8 +56,7 @@ export const SupabaseConnectModal: React.FC<SupabaseConnectModalProps> = ({
   
   // Resolve default email to test
   const resolvedDefaultEmail =
-    userEmails.find((e): e is string => Boolean(e && typeof e === 'string' && e.trim().length > 0)) ||
-    'elmerpr@gmail.com';
+    userEmails.find((e): e is string => Boolean(e && typeof e === 'string' && e.trim().length > 0)) || '';
   const [testEmail, setTestEmail] = useState(resolvedDefaultEmail);
 
   const [activeTab, setActiveTab] = useState<'config' | 'guide' | 'github'>('config');
@@ -79,8 +78,7 @@ export const SupabaseConnectModal: React.FC<SupabaseConnectModalProps> = ({
       setDiagResult(null);
       setFeedback(null);
       const email =
-        userEmails.find((e): e is string => Boolean(e && typeof e === 'string' && e.trim().length > 0)) ||
-        'elmerpr@gmail.com';
+        userEmails.find((e): e is string => Boolean(e && typeof e === 'string' && e.trim().length > 0)) || '';
       setTestEmail(email);
     }
   }, [isOpen, userEmails]);
@@ -148,7 +146,7 @@ export const SupabaseConnectModal: React.FC<SupabaseConnectModalProps> = ({
     saveSupabaseConfig(url.trim(), anonKey.trim());
 
     try {
-      const emailToUse = testEmail.trim() || 'elmerpr@gmail.com';
+      const emailToUse = testEmail.trim();
       const diag = await testSupabaseConnectionDetailed(url, anonKey, emailToUse);
       setDiagResult(diag);
 
@@ -377,17 +375,10 @@ export const SupabaseConnectModal: React.FC<SupabaseConnectModalProps> = ({
                   value={testEmail}
                   onChange={(e) => setTestEmail(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-sky-500"
-                  placeholder="elmerpr@gmail.com"
+                  placeholder="tu-correo@ejemplo.com"
                 />
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <span className="text-[11px] text-slate-500">Pruebas rápidas:</span>
-                  <button
-                    type="button"
-                    onClick={() => setTestEmail('elmerpr@gmail.com')}
-                    className="text-[11px] px-2 py-0.5 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-800 dark:text-amber-200 rounded font-medium transition cursor-pointer"
-                  >
-                    ⭐ elmerpr@gmail.com (VIP Vitalicio)
-                  </button>
+                  <span className="text-[11px] text-slate-500">Prueba:</span>
                   <button
                     type="button"
                     onClick={() => setTestEmail('usuario_prueba@ejemplo.com')}

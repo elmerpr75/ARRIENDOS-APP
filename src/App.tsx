@@ -8,6 +8,7 @@ import {
   loadLandlordProfile,
   saveLandlordProfile,
   loadAdministrators,
+  saveAdministrators,
 } from './utils/storage';
 import { calculatePropertyStatus } from './utils/calculations';
 import { checkAndTriggerAutomatedReminders } from './utils/notifications';
@@ -27,7 +28,7 @@ import { PaymentModal } from './components/PaymentModal';
 import { InvoiceModal } from './components/InvoiceModal';
 import { ProfileSettingsModal } from './components/ProfileSettingsModal';
 import { GoogleDriveBackupModal } from './components/GoogleDriveBackupModal';
-import { InitialLanguageModal } from './components/InitialLanguageModal';
+import { InitialLanguageModal, OnboardingRegistrationData } from './components/InitialLanguageModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { SubscriptionModal } from './components/SubscriptionModal';
 import { SupabaseConnectModal } from './components/SupabaseConnectModal';
@@ -36,6 +37,7 @@ import {
   SubscriptionState,
   getSubscriptionState,
   syncSubscriptionWithServer,
+  resetTrialStartDate,
 } from './utils/subscription';
 import { initAuth } from './utils/firebaseAuth';
 import { ThemeMode, getSavedThemeMode, applyThemeMode, subscribeToSystemThemeChanges } from './utils/theme';
@@ -128,7 +130,7 @@ export default function App() {
       profile.email,
       profile.googleDriveAccountEmail,
       ...administrators.map((a) => a.email),
-    ];
+    ].filter((e): e is string => Boolean(e && typeof e === 'string' && e.trim().length > 0));
   }, [authUserEmail, profile.email, profile.googleDriveAccountEmail, administrators]);
 
   const [subscriptionState, setSubscriptionState] = useState<SubscriptionState>(() =>
@@ -176,6 +178,65 @@ export default function App() {
   const handleLanguageChange = (newLang: SupportedLanguage) => {
     setCurrentLang(newLang);
     saveLanguage(newLang);
+  };
+
+  const handleCompleteRegistration = (data: OnboardingRegistrationData) => {
+    // 1. Set language
+    handleLanguageChange(data.lang);
+
+    // 2. Start the 42-day trial clock from right now
+    resetTrialStartDate(new Date());
+
+    // 3. Update profile with user's company and email
+    const updatedProfile: LandlordProfile = {
+      ...profile,
+      companyName: data.companyName,
+      landlordName: data.landlordName,
+      email: data.email,
+      currencyCode: data.currencyCode,
+      currencySymbol: data.currencySymbol,
+      googleDriveAccountEmail: '',
+    };
+    setProfile(updatedProfile);
+    saveLandlordProfile(updatedProfile);
+
+    // 4. Update administrator
+    const updatedAdmin: Administrator = {
+      id: 'admin-1',
+      companyName: data.companyName,
+      landlordName: data.landlordName,
+      taxId: '',
+      phone: '',
+      email: data.email,
+      address: '',
+      bankDetails: '',
+      invoiceNote: 'El pago debe realizarse dentro de los primeros días estipulados en contrato.',
+      currencyCode: data.currencyCode,
+      currencySymbol: data.currencySymbol,
+      isDefault: true,
+    };
+    setAdministrators([updatedAdmin]);
+    saveAdministrators([updatedAdmin]);
+
+    // 5. Handle sample properties vs blank slate
+    if (!data.useSampleData) {
+      setProperties([]);
+      saveProperties([]);
+      setPayments([]);
+      savePayments([]);
+    } else {
+      setProperties(loadProperties());
+      setPayments(loadPayments());
+    }
+
+    // 6. Recalculate subscription state for this user's email
+    const userEmails = [data.email];
+    setSubscriptionState(getSubscriptionState(userEmails));
+    syncSubscriptionWithServer(userEmails).then((remoteState) => {
+      setSubscriptionState(remoteState);
+    });
+
+    setShowInitialOnboarding(false);
   };
 
   // Automated Push Notification trigger check on startup and periodically (Windows & Android)
@@ -444,23 +505,6 @@ export default function App() {
               <span className="hidden sm:inline">Google Drive</span>
             </button>
 
-            {/* Supabase Backend Button */}
-            <button
-              onClick={() => setIsSupabaseModalOpen(true)}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold transition shadow-xs flex items-center gap-1.5 border cursor-pointer ${
-                isSupabaseConfigured()
-                  ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-600/30'
-                  : 'bg-slate-800 text-emerald-400 border-emerald-700/50 hover:bg-slate-700'
-              }`}
-              title="Conexión de Base de Datos y Backend en Supabase"
-            >
-              <Database className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Supabase</span>
-              {isSupabaseConfigured() && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              )}
-            </button>
-
             {/* Notifications Pill */}
             <button
               onClick={() => setActiveTab('reminders')}
@@ -668,6 +712,7 @@ export default function App() {
         currentLang={currentLang}
         onSelectLanguage={handleLanguageChange}
         onClose={() => setShowInitialOnboarding(false)}
+        onCompleteRegistration={handleCompleteRegistration}
       />
 
       {/* Modals */}
@@ -760,7 +805,7 @@ export default function App() {
           authUserEmail ||
           profile.googleDriveAccountEmail ||
           profile.email ||
-          'elmerpr@gmail.com'
+          ''
         }
         onSubscriptionUpdated={handleSubscriptionUpdated}
         currentLanguage={currentLang}

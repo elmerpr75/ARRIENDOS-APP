@@ -25,18 +25,18 @@ export const DEFAULT_ADMINISTRATORS: Administrator[] = [
 ];
 
 const DEFAULT_PROFILE: LandlordProfile = {
-  companyName: 'Inmobiliaria & Arrendamientos Premier',
-  landlordName: 'Ing. Alejandro Morales V.',
-  taxId: 'IAP-920415-XYZ',
-  phone: '+52 55 4123 9876',
-  email: 'administracion@inmobiliariapremier.com',
-  address: 'Av. Reforma 1240, Piso 5, CDMX',
-  bankDetails: 'Banco BBVA • Cuenta: 0123 4567 8901 • CLABE: 012 180 00123456789 0',
+  companyName: 'Inmobiliaria & Arrendamientos',
+  landlordName: 'Administrador de Propiedades',
+  taxId: '',
+  phone: '',
+  email: '',
+  address: '',
+  bankDetails: '',
   invoiceNote: 'El pago debe realizarse dentro de los primeros días estipulados en contrato para evitar cargos por mora.',
   currencyCode: 'USD',
   currencySymbol: '$',
   googleDriveFolderId: '',
-  googleDriveAccountEmail: 'elmerpr@gmail.com',
+  googleDriveAccountEmail: '',
   administrators: DEFAULT_ADMINISTRATORS,
 };
 

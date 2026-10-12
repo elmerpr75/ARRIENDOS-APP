@@ -152,9 +152,9 @@ export async function verifyServerSubscription(
     }
   }
 
-  // Fallback por defecto al correo principal del propietario para pruebas
+  // Si no hay correos válidos para consultar, no asumir ninguna cuenta
   if (validEmails.length === 0) {
-    validEmails = ['elmerpr@gmail.com'];
+    return null;
   }
 
   try {
@@ -283,9 +283,17 @@ export async function testSupabaseConnectionDetailed(
     return result;
   }
 
-  // 5. Probar función RPC check_subscription_access
-  const emailToCheck = (testEmail || '').trim().toLowerCase() || 'elmerpr@gmail.com';
+  // 5. Probar función RPC check_subscription_access si se especificó un correo
+  const emailToCheck = (testEmail || '').trim().toLowerCase();
   result.testedEmail = emailToCheck;
+
+  if (!emailToCheck) {
+    result.success = true;
+    result.stage = 'tables';
+    result.message = 'Conexión exitosa a Supabase (tablas verificadas).';
+    result.details = 'Base de datos operativa. Para probar permisos específicos, ingresa un correo electrónico.';
+    return result;
+  }
 
   try {
     const { data: rpcData, error: rpcError } = await testClient.rpc('check_subscription_access', {

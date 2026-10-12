@@ -210,31 +210,52 @@ export async function syncSubscriptionWithServer(
 }
 
 /**
+ * Reinicia la fecha de inicio del periodo de prueba y limpia cachés obsoletos
+ */
+export function resetTrialStartDate(date: Date = new Date()): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(STORAGE_KEY_FIRST_USE, date.toISOString());
+      localStorage.removeItem(STORAGE_KEY_SERVER_CACHE);
+    }
+  } catch (e) {
+    console.error('Error al reiniciar periodo de prueba:', e);
+  }
+}
+
+/**
  * Calcula el estado actual de la suscripción y permisos del usuario.
- * Prioriza la validación del servidor si está disponible en caché.
+ * Prioriza la validación del servidor si está disponible en caché y corresponde a un usuario válido.
  */
 export function getSubscriptionState(userEmails?: (string | null | undefined)[]): SubscriptionState {
+  const isVip = isLifetimeVip(userEmails);
+
   // 1. Revisar si tenemos una validación reciente del servidor Supabase
   const serverCache = getServerCachedSubscription();
   if (serverCache) {
-    return {
-      status: serverCache.status,
-      plan: serverCache.plan,
-      startDate: serverCache.start_date || new Date().toISOString(),
-      expiryDate: serverCache.expiry_date,
-      daysRemainingInTrial: serverCache.days_remaining_in_trial,
-      totalTrialDays: serverCache.total_trial_days || 42,
-      elapsedTrialDays: Math.max(0, 42 - serverCache.days_remaining_in_trial),
-      isLifetime: serverCache.is_lifetime,
-      canUseFullFeatures: serverCache.can_use_full_features,
-      canExportCode: serverCache.can_export_code,
-      pricing: SUBSCRIPTION_PRICING,
-      isServerVerified: true,
-      serverMessage: serverCache.message,
-    };
+    // Salvaguarda: si el caché del servidor dice VIP pero ninguno de los correos actuales es VIP, invalidar caché
+    if (serverCache.is_lifetime && !isVip) {
+      try {
+        localStorage.removeItem(STORAGE_KEY_SERVER_CACHE);
+      } catch {}
+    } else {
+      return {
+        status: serverCache.status,
+        plan: serverCache.plan,
+        startDate: serverCache.start_date || new Date().toISOString(),
+        expiryDate: serverCache.expiry_date,
+        daysRemainingInTrial: serverCache.days_remaining_in_trial,
+        totalTrialDays: serverCache.total_trial_days || 42,
+        elapsedTrialDays: Math.max(0, 42 - serverCache.days_remaining_in_trial),
+        isLifetime: serverCache.is_lifetime,
+        canUseFullFeatures: serverCache.can_use_full_features,
+        canExportCode: serverCache.can_export_code,
+        pricing: SUBSCRIPTION_PRICING,
+        isServerVerified: true,
+        serverMessage: serverCache.message,
+      };
+    }
   }
-
-  const isVip = isLifetimeVip(userEmails);
 
   // Si es usuario vitalicio reconocido offline
   if (isVip) {

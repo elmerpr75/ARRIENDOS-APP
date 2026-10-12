@@ -1,0 +1,7 @@
+{
+  "name": "ARRIENDOS - Rent Manager",
+  "description": "Base de datos y control de propiedades en arrendamiento: inquilinos, contratos, pagos, balances, facturación con mora y reportes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

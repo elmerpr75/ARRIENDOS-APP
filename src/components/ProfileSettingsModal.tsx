@@ -124,7 +124,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       setAdministrators(loadedAdmins);
       setActiveAdminId(loadedAdmins[0]?.id || 'admin-1');
       setGoogleDriveFolderId(profile.googleDriveFolderId || '');
-      setGoogleDriveAccountEmail(profile.googleDriveAccountEmail || 'elmerpr@gmail.com');
+      setGoogleDriveAccountEmail(profile.googleDriveAccountEmail || '');
       setSelectedLang(currentLanguage);
       setSelectedTheme(currentTheme || profile.themeMode || getSavedThemeMode());
       setPermissionStatus(getNotificationPermissionStatus());
@@ -148,8 +148,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       const emailToTest =
         profile.email ||
         googleDriveAccountEmail ||
-        (administrators[0] ? administrators[0].email : '') ||
-        'elmerpr@gmail.com';
+        (administrators[0] ? administrators[0].email : '');
 
       const diag = await testSupabaseConnectionDetailed(
         supabaseUrl,
@@ -1016,145 +1015,147 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Supabase Backend Integration (Database & Security) */}
-          <div className="p-3.5 bg-gradient-to-r from-emerald-50/70 via-teal-50/40 to-slate-50 dark:from-emerald-950/20 dark:via-slate-850 dark:to-slate-800/80 rounded-xl border border-emerald-200/80 dark:border-emerald-800/60 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
-                    {currentLanguage === 'en' ? 'Supabase Backend & PostgreSQL' : 'Backend en Supabase (PostgreSQL & RLS)'}
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
-                        isSupabaseConfigured()
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
-                          : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      {isSupabaseConfigured()
-                        ? currentLanguage === 'en'
-                          ? 'Connected'
-                          : 'Conectado'
-                        : currentLanguage === 'en'
-                        ? 'Not configured'
-                        : 'No configurado'}
-                    </span>
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {currentLanguage === 'en'
-                      ? 'Protected server verification for subscriptions, VIP accounts, and database sync.'
-                      : 'Validación en servidor para suscripciones, cuentas VIP y base de datos protegida.'}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setIsSupabaseOpen(!isSupabaseOpen)}
-                className="px-2.5 py-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-medium transition cursor-pointer"
-              >
-                {isSupabaseOpen
-                  ? currentLanguage === 'en'
-                    ? 'Hide'
-                    : 'Ocultar'
-                  : currentLanguage === 'en'
-                  ? 'Configure'
-                  : 'Configurar'}
-              </button>
-            </div>
-
-            {isSupabaseOpen && (
-              <div className="pt-2 border-t border-emerald-100 dark:border-emerald-900/40 space-y-3">
-                <div className="grid grid-cols-1 gap-2.5">
+          {/* Supabase Backend Integration (Database & Security) - Exclusivo para desarrollador / VIP */}
+          {isLifetimeVip([profile.email, profile.googleDriveAccountEmail, googleDriveAccountEmail]) && (
+            <div className="p-3.5 bg-gradient-to-r from-emerald-50/70 via-teal-50/40 to-slate-50 dark:from-emerald-950/20 dark:via-slate-850 dark:to-slate-800/80 rounded-xl border border-emerald-200/80 dark:border-emerald-800/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <div>
-                    <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                      <Server className="w-3 h-3 text-emerald-600" /> SUPABASE_URL
-                    </label>
-                    <input
-                      type="url"
-                      value={supabaseUrl}
-                      onChange={(e) => setSupabaseUrl(e.target.value)}
-                      placeholder="https://xyzcompany.supabase.co"
-                      className="mt-1 w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-emerald-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                      <Key className="w-3 h-3 text-emerald-600" /> SUPABASE_ANON_KEY (Public Key)
-                    </label>
-                    <input
-                      type="password"
-                      value={supabaseAnonKey}
-                      onChange={(e) => setSupabaseAnonKey(e.target.value)}
-                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                      className="mt-1 w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-emerald-500 font-mono"
-                    />
-                    <p className="text-[10px] text-slate-400 mt-0.5">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-1.5">
+                      {currentLanguage === 'en' ? 'Supabase Backend & PostgreSQL' : 'Backend en Supabase (PostgreSQL & RLS)'}
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                          isSupabaseConfigured()
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
+                            : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        {isSupabaseConfigured()
+                          ? currentLanguage === 'en'
+                            ? 'Connected'
+                            : 'Conectado'
+                          : currentLanguage === 'en'
+                          ? 'Not configured'
+                          : 'No configurado'}
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
                       {currentLanguage === 'en'
-                        ? 'Safe for frontend & GitHub. Row-level security enforces access rules.'
-                        : 'Seguro para el frontend público y GitHub. La base de datos está blindada con RLS.'}
+                        ? 'Protected server verification for subscriptions, VIP accounts, and database sync.'
+                        : 'Validación en servidor para suscripciones, cuentas VIP y base de datos protegida.'}
                     </p>
                   </div>
                 </div>
 
-                {supabaseFeedback && (
-                  <div
-                    className={`p-2 rounded-lg text-xs ${
-                      supabaseFeedback.success
-                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200'
-                        : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200'
-                    }`}
-                  >
-                    {supabaseFeedback.message}
+                <button
+                  type="button"
+                  onClick={() => setIsSupabaseOpen(!isSupabaseOpen)}
+                  className="px-2.5 py-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                >
+                  {isSupabaseOpen
+                    ? currentLanguage === 'en'
+                      ? 'Hide'
+                      : 'Ocultar'
+                    : currentLanguage === 'en'
+                    ? 'Configure'
+                    : 'Configurar'}
+                </button>
+              </div>
+
+              {isSupabaseOpen && (
+                <div className="pt-2 border-t border-emerald-100 dark:border-emerald-900/40 space-y-3">
+                  <div className="grid grid-cols-1 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <Server className="w-3 h-3 text-emerald-600" /> SUPABASE_URL
+                      </label>
+                      <input
+                        type="url"
+                        value={supabaseUrl}
+                        onChange={(e) => setSupabaseUrl(e.target.value)}
+                        placeholder="https://xyzcompany.supabase.co"
+                        className="mt-1 w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-emerald-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <Key className="w-3 h-3 text-emerald-600" /> SUPABASE_ANON_KEY (Public Key)
+                      </label>
+                      <input
+                        type="password"
+                        value={supabaseAnonKey}
+                        onChange={(e) => setSupabaseAnonKey(e.target.value)}
+                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                        className="mt-1 w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-emerald-500 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {currentLanguage === 'en'
+                          ? 'Safe for frontend & GitHub. Row-level security enforces access rules.'
+                          : 'Seguro para el frontend público y GitHub. La base de datos está blindada con RLS.'}
+                      </p>
+                    </div>
                   </div>
-                )}
 
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleSaveSupabase}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer"
-                  >
-                    {currentLanguage === 'en' ? 'Save Credentials' : 'Guardar Credenciales'}
-                  </button>
+                  {supabaseFeedback && (
+                    <div
+                      className={`p-2 rounded-lg text-xs ${
+                        supabaseFeedback.success
+                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200'
+                          : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200'
+                      }`}
+                    >
+                      {supabaseFeedback.message}
+                    </div>
+                  )}
 
-                  <button
-                    type="button"
-                    onClick={handleTestSupabase}
-                    disabled={supabaseTesting || !supabaseUrl}
-                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
-                  >
-                    {supabaseTesting
-                      ? currentLanguage === 'en'
-                        ? 'Testing...'
-                        : 'Probando...'
-                      : currentLanguage === 'en'
-                      ? 'Test Server RPC'
-                      : 'Probar Conexión RPC'}
-                  </button>
-
-                  {isSupabaseConfigured() && (
+                  <div className="flex flex-wrap gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={handleSyncToSupabase}
-                      disabled={supabaseSyncing}
-                      className="px-3 py-1.5 bg-sky-100 dark:bg-sky-950/60 hover:bg-sky-200 text-sky-800 dark:text-sky-200 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                      onClick={handleSaveSupabase}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer"
                     >
-                      <RefreshCw className={`w-3 h-3 ${supabaseSyncing ? 'animate-spin' : ''}`} />
-                      {supabaseSyncing
-                        ? currentLanguage === 'en'
-                          ? 'Syncing...'
-                          : 'Sincronizando...'
-                        : currentLanguage === 'en'
-                        ? 'Sync App Data'
-                        : 'Sincronizar a Supabase'}
+                      {currentLanguage === 'en' ? 'Save Credentials' : 'Guardar Credenciales'}
                     </button>
-                  )}
+
+                    <button
+                      type="button"
+                      onClick={handleTestSupabase}
+                      disabled={supabaseTesting || !supabaseUrl}
+                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                    >
+                      {supabaseTesting
+                        ? currentLanguage === 'en'
+                          ? 'Testing...'
+                          : 'Probando...'
+                        : currentLanguage === 'en'
+                        ? 'Test Server RPC'
+                        : 'Probar Conexión RPC'}
+                    </button>
+
+                    {isSupabaseConfigured() && (
+                      <button
+                        type="button"
+                        onClick={handleSyncToSupabase}
+                        disabled={supabaseSyncing}
+                        className="px-3 py-1.5 bg-sky-100 dark:bg-sky-950/60 hover:bg-sky-200 text-sky-800 dark:text-sky-200 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${supabaseSyncing ? 'animate-spin' : ''}`} />
+                        {supabaseSyncing
+                          ? currentLanguage === 'en'
+                            ? 'Syncing...'
+                            : 'Sincronizando...'
+                          : currentLanguage === 'en'
+                          ? 'Sync App Data'
+                          : 'Sincronizar a Supabase'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Backup & Restore Data */}
           <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -1187,48 +1188,6 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
               >
                 <RefreshCw className="w-3.5 h-3.5" /> {t.restoreBackupJson}
               </label>
-
-              {isLifetimeVip([profile.email, profile.googleDriveAccountEmail, googleDriveAccountEmail]) && (
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isLifetimeVip([profile.email, profile.googleDriveAccountEmail, googleDriveAccountEmail])) {
-                        alert(currentLanguage === 'en' ? 'Unauthorized: Source code access is strictly reserved for authorized lifetime developer accounts.' : 'No autorizado: El acceso y descarga del código de programación está estrictamente reservado a las cuentas vitalicias de desarrollador.');
-                        return;
-                      }
-                      const a = document.createElement('a');
-                      a.href = '/gestor-arrendamientos-codigo.zip';
-                      a.download = 'gestor-arrendamientos-codigo.zip';
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                    }}
-                    className="px-3 py-1.5 bg-amber-100 dark:bg-amber-950/60 hover:bg-amber-200 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                    title="Descarga exclusiva para cuentas vitalicias y desarrollador autorizadas"
-                  >
-                    <Download className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" /> {t.exportZipCode} (VIP)
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isLifetimeVip([profile.email, profile.googleDriveAccountEmail, googleDriveAccountEmail])) {
-                        alert(currentLanguage === 'en' ? 'Unauthorized: Source code copying is restricted.' : 'No autorizado: Copiar el código está restringido a cuentas autorizadas.');
-                        return;
-                      }
-                      const zipUrl = window.location.origin + '/gestor-arrendamientos-codigo.zip';
-                      navigator.clipboard.writeText(zipUrl);
-                      alert(currentLanguage === 'en' ? '✓ Source code package link copied to clipboard!' : '✓ ¡Enlace del paquete de código copiado al portapapeles!');
-                    }}
-                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-medium flex items-center gap-1 transition cursor-pointer"
-                    title="Copiar enlace directo al código fuente (.ZIP)"
-                  >
-                    <Copy className="w-3.5 h-3.5 text-slate-500" />
-                    <span>{currentLanguage === 'en' ? 'Copy Link' : 'Copiar Enlace'}</span>
-                  </button>
-                </div>
-              )}
             </div>
             {importStatus && (
               <p className="text-xs text-emerald-600 font-semibold mt-1.5">{importStatus}</p>

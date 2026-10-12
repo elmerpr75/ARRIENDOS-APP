@@ -6,8 +6,7 @@ import {
   onAuthStateChanged,
   User,
 } from 'firebase/auth';
-
-// Configuración de Firebase integrada directamente
+// Firebase configuration (embedded so external git/Vercel builds never fail on missing json)
 const firebaseConfig = {
   projectId: 'gen-lang-client-0420908951',
   appId: '1:858171444036:web:1a0d7768626e1b4c88e511',
@@ -24,16 +23,16 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Permisos para Google Drive
+// Request Google Drive scopes
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.addScope('https://www.googleapis.com/auth/drive');
 provider.setCustomParameters({
   prompt: 'select_account',
 });
 
-// Almacenamiento seguro del token de acceso
+// Access token cache with session backup
 const TOKEN_KEY = 'gdrive_oauth_token_v1';
-const TOKEN_TTL_MS = 55 * 60 * 1000; // 55 minutos
+const TOKEN_TTL_MS = 55 * 60 * 1000; // 55 minutes
 let cachedAccessToken: { token: string; timestamp: number } | null = null;
 let isSigningIn = false;
 
@@ -63,6 +62,7 @@ export function getStoredToken(): string | null {
     if (Date.now() - cachedAccessToken.timestamp < TOKEN_TTL_MS) {
       return cachedAccessToken.token;
     }
+    // Expired
     cachedAccessToken = null;
   }
 
@@ -88,7 +88,7 @@ export function hasValidAccessToken(): boolean {
 }
 
 /**
- * Listener de sesión
+ * Initialize auth state listener. Call this on app load.
  */
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
@@ -100,6 +100,7 @@ export const initAuth = (
       if (activeToken) {
         if (onAuthSuccess) onAuthSuccess(user, activeToken);
       } else if (!isSigningIn) {
+        // User is logged in to Firebase but token expired or needs fresh auth for Drive
         if (onAuthSuccess) onAuthSuccess(user, '');
       }
     } else {
@@ -110,7 +111,8 @@ export const initAuth = (
 };
 
 /**
- * Inicio de sesión con Google Drive Popup
+ * Sign in with Google Popup and obtain access token.
+ * Returns null if the user cancelled or closed the popup.
  */
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
@@ -124,6 +126,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     setToken(credential.accessToken);
     return { user: result.user, accessToken: credential.accessToken };
   } catch (error: any) {
+    // If the user closed or cancelled the popup, handle gracefully without error logs
     if (
       error?.code === 'auth/popup-closed-by-user' ||
       error?.code === 'auth/cancelled-popup-request' ||
@@ -138,10 +141,16 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
+/**
+ * Get current cached access token or request sign in if missing
+ */
 export const getAccessToken = async (): Promise<string | null> => {
   return getStoredToken();
 };
 
+/**
+ * Sign out and clear cached token
+ */
 export const logout = async (): Promise<void> => {
   await auth.signOut();
   setToken(null);

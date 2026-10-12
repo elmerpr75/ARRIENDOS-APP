@@ -760,52 +760,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
           </div>
 
           {/* Footer */}
-          <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-            {isLifetimeVip([currentUser?.email, userEmail]) ? (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isLifetimeVip([currentUser?.email, userEmail])) {
-                      alert(currentLanguage === 'en' ? 'Unauthorized: Source code access is strictly reserved for authorized lifetime developer accounts.' : 'No autorizado: El acceso y descarga del código de programación está estrictamente reservado a las cuentas vitalicias de desarrollador.');
-                      return;
-                    }
-                    const a = document.createElement('a');
-                    a.href = '/gestor-arrendamientos-codigo.zip';
-                    a.download = 'gestor-arrendamientos-codigo.zip';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                  }}
-                  className="px-3 py-1.5 bg-amber-100 dark:bg-amber-950/60 hover:bg-amber-200 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                  title="Descarga exclusiva para cuentas de desarrollador y vitalicias autorizadas"
-                >
-                  <CloudDownload className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                  {t.exportZipCode} (VIP)
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isLifetimeVip([currentUser?.email, userEmail])) {
-                      alert(currentLanguage === 'en' ? 'Unauthorized: Source code copying is restricted.' : 'No autorizado: Copiar el código está restringido a cuentas autorizadas.');
-                      return;
-                    }
-                    const zipUrl = window.location.origin + '/gestor-arrendamientos-codigo.zip';
-                    navigator.clipboard.writeText(zipUrl);
-                    alert(currentLanguage === 'en' ? '✓ Source code package link copied to clipboard!' : '✓ ¡Enlace del paquete de código copiado al portapapeles!');
-                  }}
-                  className="px-2.5 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-medium flex items-center gap-1 transition cursor-pointer"
-                  title="Copiar enlace directo al archivo de código fuente (.ZIP)"
-                >
-                  <Copy className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{currentLanguage === 'en' ? 'Copy Link' : 'Copiar Enlace'}</span>
-                </button>
-              </div>
-            ) : (
-              <div />
-            )}
-
+          <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end">
             <button
               type="button"
               onClick={onClose}
