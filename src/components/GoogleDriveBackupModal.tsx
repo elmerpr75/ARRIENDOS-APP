@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User } from 'firebase/auth';
 import {
   auth,
@@ -31,6 +31,8 @@ import {
   RefreshCw,
   FolderCheck,
   Copy,
+  Download,
+  Upload,
 } from 'lucide-react';
 import { SupportedLanguage, translations } from '../utils/i18n';
 import { isLifetimeVip } from '../utils/subscription';
@@ -73,6 +75,8 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
     type: 'success' | 'error' | 'info';
     text: string;
   } | null>(null);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setFolderInput(folderIdOrUrl || '');
@@ -217,6 +221,15 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
         });
         return;
       }
+      if (error?.code === 'auth/unauthorized-domain' || error?.message?.includes('unauthorized-domain')) {
+        const hostname = typeof window !== 'undefined' ? window.location.hostname : 'arriendos-app-two.vercel.app';
+        setUnauthorizedDomain(hostname);
+        setStatusMessage({
+          type: 'error',
+          text: `El dominio "${hostname}" no está en los Dominios Autorizados de Firebase Auth. Sigue las instrucciones abajo para agregarlo en 1 minuto.`,
+        });
+        return;
+      }
       console.warn('Login issue:', error);
       setStatusMessage({
         type: 'error',
@@ -225,6 +238,62 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
     } finally {
       setIsSigningIn(false);
     }
+  };
+
+  const handleExportLocalJson = () => {
+    try {
+      const dataStr = exportAppData();
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().split('T')[0];
+      link.href = url;
+      link.download = `arriendos-respaldo-${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setStatusMessage({
+        type: 'success',
+        text: '¡Copia de seguridad local (.json) descargada exitosamente en tu dispositivo!',
+      });
+    } catch (e: any) {
+      setStatusMessage({
+        type: 'error',
+        text: `Error al generar respaldo local: ${e.message || e}`,
+      });
+    }
+  };
+
+  const handleImportLocalJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const content = event.target?.result as string;
+        const result = importAppData(content);
+        if (result.success) {
+          setStatusMessage({
+            type: 'success',
+            text: `✓ ¡Base de datos restaurada! Se importaron ${result.propertiesCount} propiedad(es) y ${result.paymentsCount} pago(s).`,
+          });
+          onDataRestored();
+        } else {
+          setStatusMessage({
+            type: 'error',
+            text: result.error || 'Archivo inválido o formato incompatible.',
+          });
+        }
+      } catch (err: any) {
+        setStatusMessage({
+          type: 'error',
+          text: `Error al procesar el archivo de respaldo: ${err.message || err}`,
+        });
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSignOut = async () => {
@@ -458,6 +527,51 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
                   <Cloud className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
                 )}
                 <div className="flex-1">{statusMessage.text}</div>
+              </div>
+            )}
+
+            {/* Unauthorized Domain Explanatory Card */}
+            {unauthorizedDomain && (
+              <div className="p-4 bg-amber-50 dark:bg-amber-950/60 rounded-xl border-2 border-amber-300 dark:border-amber-700 space-y-3 text-xs">
+                <div className="flex items-start gap-2.5 text-amber-900 dark:text-amber-200">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold text-sm text-amber-950 dark:text-amber-100">
+                      Dominio no autorizado en Firebase Auth (`auth/unauthorized-domain`)
+                    </h4>
+                    <p className="mt-1 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                      Google bloquea el inicio de sesión porque tu dominio en producción (<strong className="font-mono bg-amber-200/60 dark:bg-amber-900/80 px-1 py-0.5 rounded">{unauthorizedDomain}</strong>) aún no está registrado en los <strong>Dominios autorizados</strong> de tu proyecto de Firebase.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-amber-200 dark:border-amber-900/60 space-y-2 text-[11px] text-slate-700 dark:text-slate-300">
+                  <p className="font-bold text-slate-900 dark:text-white">
+                    Pasos sencillos para autorizarlo (toma 1 minuto):
+                  </p>
+                  <ol className="list-decimal pl-4 space-y-1.5 text-slate-600 dark:text-slate-300">
+                    <li>
+                      Abre la consola de Firebase del proyecto:{' '}
+                      <a
+                        href="https://console.firebase.google.com/project/gen-lang-client-0420908951/authentication/settings"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sky-600 dark:text-sky-400 underline font-semibold inline-flex items-center gap-1"
+                      >
+                        Consola Firebase &gt; Autenticación &gt; Settings <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </li>
+                    <li>
+                      En la pestaña <strong>Dominios autorizados</strong> (Authorized domains), haz clic en el botón <strong>Agregar dominio</strong>.
+                    </li>
+                    <li>
+                      Escribe <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono font-bold text-sky-600">{unauthorizedDomain}</code> (o simplemente <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono font-bold text-sky-600">vercel.app</code> para cubrir todos tus enlaces) y haz clic en <strong>Guardar</strong>.
+                    </li>
+                    <li>
+                      Regresa a esta ventana y haz clic de nuevo en <strong>"Vincular cuenta de Google Drive"</strong>.
+                    </li>
+                  </ol>
+                </div>
               </div>
             )}
 
@@ -756,6 +870,48 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* 5. Respaldo y Restauración Local en Archivo (.JSON) */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Download className="w-4 h-4 text-sky-500" />
+                  Respaldo y Restauración Local (.JSON)
+                </span>
+                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full">
+                  100% Funcional sin Nube
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                Descarga un archivo con toda tu información (propiedades, contratos, pagos, balances e historial) directamente a tu computadora o celular, o restaura desde un archivo previamente guardado:
+              </p>
+              <div className="flex flex-wrap gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={handleExportLocalJson}
+                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Descargar Copia Local (.json)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Restaurar desde Archivo (.json)
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImportLocalJson}
+                  accept=".json,application/json"
+                  className="hidden"
+                />
+              </div>
             </div>
           </div>
 

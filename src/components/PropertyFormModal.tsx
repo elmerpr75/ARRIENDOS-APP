@@ -697,7 +697,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        Electricidad (LUMA / AEE)
+                        Electricidad <span className="font-normal text-[10px] text-slate-500 dark:text-slate-400">(LUMA / AEE)</span>
                       </h4>
                       <span className="text-[10px] text-slate-400">
                         {utilitiesElectricActive ? 'Cargo adicional activo' : 'No incluido'}
@@ -752,7 +752,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                       />
                     </div>
                     <span className="block text-[10px] text-slate-400">
-                      Modificable en cualquier momento según recibo de LUMA / AEE.
+                      Modificable en cualquier momento según recibo de Electricidad (LUMA / AEE).
                     </span>
                   </div>
                 )}

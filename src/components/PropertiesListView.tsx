@@ -682,7 +682,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                       >
                         <div className="flex items-center justify-between mb-0.5">
                           <span className="font-semibold flex items-center gap-1 text-[11px] text-amber-900 dark:text-amber-200">
-                            <Zap className="w-3 h-3 text-amber-500" /> Electricidad (LUMA / AEE)
+                            <Zap className="w-3 h-3 text-amber-500" /> Electricidad
                           </span>
                           <span
                             className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
