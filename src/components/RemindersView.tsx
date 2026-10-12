@@ -174,7 +174,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     if (hasUtilities) {
       const parts: string[] = [];
       if (property.utilitiesWaterActive && waterAmt > 0) parts.push(`Agua: ${formatCurrency(waterAmt, admin.currencySymbol)}`);
-      if (property.utilitiesElectricActive && elecAmt > 0) parts.push(`LUMA / AEE: ${formatCurrency(elecAmt, admin.currencySymbol)}`);
+      if (property.utilitiesElectricActive && elecAmt > 0) parts.push(`Electricidad (LUMA / AEE): ${formatCurrency(elecAmt, admin.currencySymbol)}`);
       const breakdownText = parts.length > 0 ? ` (${parts.join(', ')})` : '';
 
       utilitiesReminderNote = `💡 *Nota sobre utilidades:* En la última factura recibida el costo de utilidades fue de ${formatCurrency(utilitiesLastMonthTotal, admin.currencySymbol)}${breakdownText}. El costo para este próximo ciclo variará según el consumo real. No se incluye en este total preliminar; tan pronto llegue la próxima factura de los proveedores se le indicará y agregará la cantidad exacta a pagar por dicho concepto.\n\n`;
@@ -239,7 +239,7 @@ Le informamos que al día de hoy presenta un saldo pendiente en su cuenta:
 
 💰 *DESGLOSE DE SALDOS PENDIENTES:*
 ▪️ Renta contractual pendiente: ${formatCurrency(status.pendingRentBalance, admin.currencySymbol)}
-${property.utilitiesWaterActive ? `▪️ Utilidad de Agua pendiente: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `▪️ Utilidad Electricidad (LUMA/AEE) pendiente: ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}\n` : ''}${status.totalLateFees > 0 ? `🚨 Recargos por mora aplicados: ${formatCurrency(status.pendingLateFeesBalance, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive ? `▪️ Utilidad de Agua pendiente: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `▪️ Utilidad de Electricidad (LUMA / AEE) pendiente: ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}\n` : ''}${status.totalLateFees > 0 ? `🚨 Recargos por mora aplicados: ${formatCurrency(status.pendingLateFeesBalance, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL PENDIENTE: ${formatCurrency(status.totalPendingBalance, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -270,7 +270,7 @@ Le compartimos los datos de su programación de pago correspondiente al presente
 
 💰 *DESGLOSE DE CARGOS:*
 ▪️ Renta convenida en contrato: ${formatCurrency(status.rentAmount, admin.currencySymbol)}${!status.isRentDueReached ? ` (Inicia el ${formatDate(status.dueDate)})` : ''}
-${property.utilitiesWaterActive && status.waterAmount > 0 ? `▪️ Utilidad de Agua (Consumo según proveedor): ${formatCurrency(status.waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && status.electricAmount > 0 ? `▪️ Utilidad Electricidad LUMA/AEE (Consumo según proveedor): ${formatCurrency(status.electricAmount, admin.currencySymbol)}\n` : ''}${status.previousBalance > 0 ? `▪️ Saldos atrasados de meses anteriores: ${formatCurrency(status.previousBalance, admin.currencySymbol)}\n` : ''}${status.paidRentThisMonth > 0 ? `▪️ Abonos registrados: -${formatCurrency(status.paidRentThisMonth, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && status.waterAmount > 0 ? `▪️ Utilidad de Agua (Consumo según proveedor): ${formatCurrency(status.waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && status.electricAmount > 0 ? `▪️ Utilidad de Electricidad (LUMA / AEE) (Consumo según proveedor): ${formatCurrency(status.electricAmount, admin.currencySymbol)}\n` : ''}${status.previousBalance > 0 ? `▪️ Saldos atrasados de meses anteriores: ${formatCurrency(status.previousBalance, admin.currencySymbol)}\n` : ''}${status.paidRentThisMonth > 0 ? `▪️ Abonos registrados: -${formatCurrency(status.paidRentThisMonth, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL A PAGAR AL LLEGAR SU DÍA DE PAGO: ${formatCurrency(totalUpcomingToPay, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 

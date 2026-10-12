@@ -195,8 +195,13 @@ export default function App() {
       email: data.email,
       currencyCode: data.currencyCode,
       currencySymbol: data.currencySymbol,
+      themeMode: data.themeMode,
       googleDriveAccountEmail: '',
     };
+    if (data.themeMode) {
+      applyThemeMode(data.themeMode);
+      setThemeMode(data.themeMode);
+    }
     setProfile(updatedProfile);
     saveLandlordProfile(updatedProfile);
 

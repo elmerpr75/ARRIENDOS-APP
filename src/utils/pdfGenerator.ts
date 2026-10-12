@@ -1,6 +1,95 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 
+/**
+ * Recursively replicates all computed layout, typography, box-model, and color styles
+ * from the live DOM element into its clone. This bypasses all issues with external
+ * stylesheets, modern CSS syntax (oklch), missing stylesheets in cloned iframes,
+ * and ensures 100% faithful visual reproduction in html2canvas.
+ */
+function recursivelyApplyComputedStyles(source: HTMLElement, target: HTMLElement): void {
+  try {
+    const cs = window.getComputedStyle(source);
+
+    // Structural & layout
+    target.style.display = cs.display;
+    if (cs.display.includes('flex')) {
+      target.style.flexDirection = cs.flexDirection;
+      target.style.flexWrap = cs.flexWrap;
+      target.style.alignItems = cs.alignItems;
+      target.style.justifyContent = cs.justifyContent;
+      target.style.gap = cs.gap;
+    }
+    if (cs.display.includes('grid')) {
+      target.style.gridTemplateColumns = cs.gridTemplateColumns;
+      target.style.gridTemplateRows = cs.gridTemplateRows;
+      target.style.gap = cs.gap;
+    }
+    if (cs.display.includes('table')) {
+      target.style.borderCollapse = cs.borderCollapse;
+    }
+
+    // Box model & dimensions
+    target.style.boxSizing = cs.boxSizing;
+    target.style.width = cs.width;
+    target.style.minWidth = cs.minWidth;
+    target.style.maxWidth = cs.maxWidth;
+    target.style.paddingTop = cs.paddingTop;
+    target.style.paddingRight = cs.paddingRight;
+    target.style.paddingBottom = cs.paddingBottom;
+    target.style.paddingLeft = cs.paddingLeft;
+    target.style.marginTop = cs.marginTop;
+    target.style.marginRight = cs.marginRight;
+    target.style.marginBottom = cs.marginBottom;
+    target.style.marginLeft = cs.marginLeft;
+
+    // Typography
+    target.style.color = cs.color;
+    target.style.fontFamily = cs.fontFamily;
+    target.style.fontSize = cs.fontSize;
+    target.style.fontWeight = cs.fontWeight;
+    target.style.lineHeight = cs.lineHeight;
+    target.style.letterSpacing = cs.letterSpacing;
+    target.style.textAlign = cs.textAlign;
+    target.style.textTransform = cs.textTransform;
+
+    // Background & Borders
+    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+      target.style.backgroundColor = cs.backgroundColor;
+    }
+    if (cs.borderTopWidth && cs.borderTopWidth !== '0px') {
+      target.style.borderTop = `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}`;
+    }
+    if (cs.borderRightWidth && cs.borderRightWidth !== '0px') {
+      target.style.borderRight = `${cs.borderRightWidth} ${cs.borderRightStyle} ${cs.borderRightColor}`;
+    }
+    if (cs.borderBottomWidth && cs.borderBottomWidth !== '0px') {
+      target.style.borderBottom = `${cs.borderBottomWidth} ${cs.borderBottomStyle} ${cs.borderBottomColor}`;
+    }
+    if (cs.borderLeftWidth && cs.borderLeftWidth !== '0px') {
+      target.style.borderLeft = `${cs.borderLeftWidth} ${cs.borderLeftStyle} ${cs.borderLeftColor}`;
+    }
+    if (cs.borderRadius && cs.borderRadius !== '0px') {
+      target.style.borderRadius = cs.borderRadius;
+    }
+    if (cs.boxShadow && cs.boxShadow !== 'none') {
+      target.style.boxShadow = cs.boxShadow;
+    }
+  } catch (err) {
+    // Graceful skip for elements with restricted styles
+  }
+
+  // Recurse cleanly down child elements
+  const sourceChildren = Array.from(source.children) as HTMLElement[];
+  const targetChildren = Array.from(target.children) as HTMLElement[];
+  const minLen = Math.min(sourceChildren.length, targetChildren.length);
+  for (let i = 0; i < minLen; i++) {
+    if (sourceChildren[i] && targetChildren[i] && sourceChildren[i].nodeType === 1 && targetChildren[i].nodeType === 1) {
+      recursivelyApplyComputedStyles(sourceChildren[i], targetChildren[i]);
+    }
+  }
+}
+
 export async function downloadElementAsPdf(
   elementId: string,
   filename: string,
@@ -15,28 +104,69 @@ export async function downloadElementAsPdf(
   try {
     if (onProgress) onProgress(true);
 
+    // Extract inlined stylesheet rules from all currently loaded stylesheets
+    let combinedCssText = '';
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          if (sheet.cssRules) {
+            for (const rule of Array.from(sheet.cssRules)) {
+              combinedCssText += rule.cssText + '\n';
+            }
+          }
+        } catch {
+          // Cross-origin stylesheet rules access restriction
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
     const fullHeight = Math.max(element.scrollHeight, element.offsetHeight, 1100);
-    const fullWidth = Math.max(element.scrollWidth, element.offsetWidth, 900);
+    const fullWidth = Math.max(element.scrollWidth, element.offsetWidth, 850);
 
     const canvas = await html2canvas(element, {
-      scale: 2, // High resolution for crisp text
+      scale: 2, // High resolution for ultra-sharp vectors and text
       useCORS: true,
       allowTaint: true,
       logging: false,
       backgroundColor: '#ffffff',
-      windowWidth: Math.max(fullWidth, 1200),
-      windowHeight: fullHeight + 400,
+      windowWidth: Math.max(fullWidth, 1100),
+      windowHeight: fullHeight + 300,
       height: fullHeight,
       onclone: (clonedDoc) => {
         const clonedElement = clonedDoc.getElementById(elementId);
         if (clonedElement) {
+          // Remove UI-only elements before styling so node hierarchy matches
+          clonedElement.querySelectorAll('.no-print').forEach((node) => {
+            (node as HTMLElement).remove();
+          });
+
+          // Inject combined document CSS directly into cloned <head>
+          if (combinedCssText) {
+            const inlineStyleTag = clonedDoc.createElement('style');
+            inlineStyleTag.setAttribute('type', 'text/css');
+            inlineStyleTag.textContent = combinedCssText;
+            clonedDoc.head.appendChild(inlineStyleTag);
+          }
+
+          // Ensure document layout is pristine, white background, and unclipped
+          clonedElement.classList.remove('hidden');
+          clonedElement.style.display = 'block';
           clonedElement.style.maxHeight = 'none';
           clonedElement.style.height = 'auto';
           clonedElement.style.overflow = 'visible';
           clonedElement.style.backgroundColor = '#ffffff';
+          clonedElement.style.color = '#0f172a';
           clonedElement.style.width = '100%';
+          clonedElement.style.maxWidth = '900px';
+          clonedElement.style.margin = '0 auto';
+          clonedElement.style.padding = '24px 32px';
 
-          // Remove clipping and overflow restrictions from all parent containers
+          // Recursively apply all computed layout and visual styles
+          recursivelyApplyComputedStyles(element, clonedElement);
+
+          // Clear any clipping from parent tree
           let parent = clonedElement.parentElement;
           while (parent && parent !== clonedDoc.body) {
             parent.style.maxHeight = 'none';
@@ -51,17 +181,13 @@ export async function downloadElementAsPdf(
             clonedDoc.body.style.maxHeight = 'none';
             clonedDoc.body.style.height = 'auto';
             clonedDoc.body.style.overflow = 'visible';
+            clonedDoc.body.style.backgroundColor = '#ffffff';
           }
           if (clonedDoc.documentElement) {
             clonedDoc.documentElement.style.maxHeight = 'none';
             clonedDoc.documentElement.style.height = 'auto';
             clonedDoc.documentElement.style.overflow = 'visible';
           }
-
-          // Hide UI-only elements in clone
-          clonedDoc.querySelectorAll('.no-print').forEach((node) => {
-            (node as HTMLElement).style.display = 'none';
-          });
         }
       },
     });
@@ -82,8 +208,8 @@ export async function downloadElementAsPdf(
     const imgWidth = printableWidth;
     const imgHeight = (canvas.height * printableWidth) / canvas.width;
 
-    // Single-page auto-fit for invoices and receipts within 1.3x single A4 page
-    if (imgHeight <= printableHeight * 1.3) {
+    // Single-page auto-fit for invoices and receipts within 1.35x single A4 page
+    if (imgHeight <= printableHeight * 1.35) {
       const scale = Math.min(1, printableHeight / imgHeight);
       const finalWidth = imgWidth * scale;
       const finalHeight = imgHeight * scale;
@@ -92,7 +218,7 @@ export async function downloadElementAsPdf(
 
       pdf.addImage(imgData, 'JPEG', xOffset, yOffset, finalWidth, finalHeight, undefined, 'FAST');
     } else {
-      // Multi-page document (such as executive status reports with dozens of rows)
+      // Multi-page document
       let heightLeft = imgHeight;
       let pageIndex = 0;
 
@@ -129,7 +255,7 @@ export function printElementSafely(elementId: string, fallbackFilename: string):
     return;
   }
 
-  // Collect all stylesheets (link tags and style tags) from current document
+  // Collect all stylesheets (link tags, style tags, and extracted css rules)
   let stylesHtml = '';
   document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
     stylesHtml += link.outerHTML + '\n';
@@ -137,6 +263,23 @@ export function printElementSafely(elementId: string, fallbackFilename: string):
   document.querySelectorAll('style').forEach((styleTag) => {
     stylesHtml += styleTag.outerHTML + '\n';
   });
+
+  // Extract loaded CSS rules directly into an inline style tag
+  let extractedCss = '';
+  try {
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        if (sheet.cssRules) {
+          for (const rule of Array.from(sheet.cssRules)) {
+            extractedCss += rule.cssText + '\n';
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  if (extractedCss) {
+    stylesHtml += `<style type="text/css">${extractedCss}</style>\n`;
+  }
 
   // Clone element to clean up any unwanted classes or display issues
   const clone = element.cloneNode(true) as HTMLElement;

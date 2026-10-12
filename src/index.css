@@ -1,6 +1,27 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Enforce crisp high-contrast text rendering on form inputs across Chrome/Windows/macOS */
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+input, select, textarea {
+  color-scheme: inherit;
+}
+
+html.dark input, html.dark select, html.dark textarea {
+  color-scheme: dark;
+}
+
+html:not(.dark) input, html:not(.dark) select, html:not(.dark) textarea {
+  color-scheme: light;
+}
+
 @media print {
   html, body {
     background: white !important;

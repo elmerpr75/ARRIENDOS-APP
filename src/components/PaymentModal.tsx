@@ -500,7 +500,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         payerName: defaultTenant,
         reference: '',
         period: defaultPeriod,
-        notes: 'Pago de utilidad de electricidad LUMA / AEE',
+        notes: 'Pago de utilidad de electricidad (LUMA / AEE)',
       });
     }
 
@@ -627,7 +627,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     if (numRent > 0) breakdownParts.push(`Renta: ${formatCurrency(numRent, admin.currencySymbol)}`);
     if (numDeposit > 0) breakdownParts.push(`Depósito en contrato: ${formatCurrency(numDeposit, admin.currencySymbol)}`);
     if (numWater > 0) breakdownParts.push(`Agua: ${formatCurrency(numWater, admin.currencySymbol)}`);
-    if (numElectric > 0) breakdownParts.push(`LUMA/AEE: ${formatCurrency(numElectric, admin.currencySymbol)}`);
+    if (numElectric > 0) breakdownParts.push(`Electricidad (LUMA / AEE): ${formatCurrency(numElectric, admin.currencySymbol)}`);
 
     const applicationFootnote = `Desglose de recepción: ${breakdownParts.join(', ')}. Detallado y certificado por la administración.`;
 
@@ -1091,7 +1091,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-amber-950 dark:text-amber-200">
-                              5. Utilidad Electricidad (LUMA / AEE)
+                              5. Utilidad de Electricidad (LUMA / AEE)
                             </span>
                             <span className="px-1.5 py-0.2 bg-amber-600 text-white rounded text-[9px] font-bold">
                               Factura Anterior
@@ -1435,7 +1435,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                               : r.concept === 'agua'
                               ? '💧 Agua Potable'
                               : r.concept === 'electricidad'
-                              ? '⚡ Electricidad LUMA/AEE'
+                              ? '⚡ Electricidad (LUMA / AEE)'
                               : r.concept === 'mora'
                               ? '🚨 Mora / Recargo'
                               : '⚖️ General / Mixto'}
@@ -1496,7 +1496,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                               <option value="agua">💧 Utilidad de Agua Potable</option>
                             )}
                             {currentProperty?.utilitiesElectricActive && (
-                              <option value="electricidad">⚡ Utilidad Electricidad (LUMA / AEE)</option>
+                              <option value="electricidad">⚡ Utilidad de Electricidad (LUMA / AEE)</option>
                             )}
                             <option value="mora">🚨 Recargo por Demora (Mora)</option>
                             <option value="general">⚖️ Aplicación General / Mixto</option>

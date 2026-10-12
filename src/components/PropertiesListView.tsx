@@ -682,7 +682,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                       >
                         <div className="flex items-center justify-between mb-0.5">
                           <span className="font-semibold flex items-center gap-1 text-[11px] text-amber-900 dark:text-amber-200">
-                            <Zap className="w-3 h-3 text-amber-500" /> LUMA / AEE
+                            <Zap className="w-3 h-3 text-amber-500" /> Electricidad (LUMA / AEE)
                           </span>
                           <span
                             className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
@@ -769,7 +769,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                         </div>
                         <span
                           className="text-[10px] text-slate-400 block truncate"
-                          title={`Agua: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)} | LUMA: ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}`}
+                          title={`Agua: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)} | Electricidad (LUMA / AEE): ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}`}
                         >
                           💧 {formatCurrency(status.pendingWaterBalance, admin.currencySymbol)} • ⚡ {formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}
                         </span>
@@ -1072,7 +1072,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                 {quickElectricActive && (
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                      Costo de factura de luz LUMA según consumo del mes anterior ($):
+                      Costo de factura de Electricidad (LUMA / AEE) según consumo del mes anterior ($):
                     </label>
                     <input
                       type="number"

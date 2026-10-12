@@ -431,13 +431,13 @@ ${admin.invoiceNote ? `Nota: ${admin.invoiceNote}\n\n` : ''}🙏 Agradecemos su 
 
 💰 *DESGLOSE DE CARGOS:*
 ▪️ Renta del periodo: ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `▪️ Utilidad de Agua (Consumo factura anterior): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `▪️ Utilidad Electricidad LUMA / AEE (Consumo factura anterior): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Balances atrasados no pagados: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `▪️ Cargo base por atraso: ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `▪️ Demora diaria (${status.effectiveDailyDays ?? daysOverdue} días tras gracia${status.lateFeeCapNotice ? ` - ${status.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos registrados en el mes: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && waterAmount > 0 ? `▪️ Utilidad de Agua (Consumo factura anterior): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `▪️ Utilidad de Electricidad (LUMA / AEE) (Consumo factura anterior): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Balances atrasados no pagados: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `▪️ Cargo base por atraso: ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `▪️ Demora diaria (${status.effectiveDailyDays ?? daysOverdue} días tras gracia${status.lateFeeCapNotice ? ` - ${status.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos registrados en el mes: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL A PAGAR: ${formatCurrency(totalDue, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 *BALANCES PENDIENTES SEGREGADOS:*
 ▪️ Saldo Renta pendiente: ${formatCurrency(status.pendingRentBalance, admin.currencySymbol)}
-${property.utilitiesWaterActive ? `▪️ Saldo Agua pendiente: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `▪️ Saldo Electricidad LUMA / AEE pendiente: ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}\n` : ''}${status.totalLateFees > 0 ? `▪️ Saldo Moras pendiente: ${formatCurrency(status.pendingLateFeesBalance, admin.currencySymbol)}\n` : ''}
+${property.utilitiesWaterActive ? `▪️ Saldo Agua pendiente: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `▪️ Saldo Electricidad (LUMA / AEE) pendiente: ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}\n` : ''}${status.totalLateFees > 0 ? `▪️ Saldo Moras pendiente: ${formatCurrency(status.pendingLateFeesBalance, admin.currencySymbol)}\n` : ''}
 🏦 *DATOS BANCARIOS PARA PAGO / TRANSFERENCIA:*
 ${admin.bankDetails}
 
@@ -482,29 +482,29 @@ APLICACIÓN DE FONDOS CONFORME A PRELACIÓN LEGAL:
 - Cubierto a Cargos por Mora / Demora:    ${formatCurrency(activePayment.appliedToLateFees || 0, admin.currencySymbol)}
 - Cubierto a Renta Convenida:             ${formatCurrency(activePayment.appliedToRent || 0, admin.currencySymbol)}
 ${(activePayment.appliedToDeposit || 0) > 0 ? `- Cubierto a Depósito en Garantía:        ${formatCurrency(activePayment.appliedToDeposit || 0, admin.currencySymbol)}\n` : ''}- Cubierto a Utilidad de Agua:            ${formatCurrency(activePayment.appliedToWater || 0, admin.currencySymbol)}
-- Cubierto a Utilidad Electricidad (LUMA): ${formatCurrency(activePayment.appliedToElectric || 0, admin.currencySymbol)}
+- Cubierto a Utilidad de Electricidad (LUMA / AEE): ${formatCurrency(activePayment.appliedToElectric || 0, admin.currencySymbol)}
 
 BALANCES PENDIENTES TRAS ESTE PAGO:
 - Saldo Renta pendiente:                  ${formatCurrency(status.pendingRentBalance, admin.currencySymbol)}
 - Saldo Agua pendiente:                   ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}
-- Saldo Electricidad LUMA/AEE pendiente:  ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}
+- Saldo Electricidad (LUMA / AEE) pendiente:  ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}
 - Saldo Moras pendiente:                  ${formatCurrency(status.pendingLateFeesBalance, admin.currencySymbol)}
 TOTAL ADEUDADO:                           ${formatCurrency(status.totalPendingBalance, admin.currencySymbol)}
 
 ${activePayment.applicationFootnote ? `NOTA AL CALCE:\n${activePayment.applicationFootnote}\n` : ''}` : !isRentDueReached && !isNextMonth ? `• Renta mensual convenida:                  ${formatCurrency(rent, admin.currencySymbol)} (Inicia el ${formatDate(activeDueDate)} - Aún no exigible)
 • Cargo activo de renta hoy:                ${formatCurrency(0, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `• Utilidad de Agua (Consumo proveedor):      ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `• Utilidad Electricidad (LUMA / AEE):         ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `• Balances atrasados no pagados:            ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `• Abonos registrados:                     -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
+${property.utilitiesWaterActive && waterAmount > 0 ? `• Utilidad de Agua (Consumo proveedor):      ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `• Utilidad de Electricidad (LUMA / AEE):     ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `• Balances atrasados no pagados:            ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `• Abonos registrados:                     -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
 TOTAL A PAGAR AL DÍA DE HOY:                  ${formatCurrency(totalDue, admin.currencySymbol)}
 ------------------------------------------------------
 TÉRMINOS DE PAGO DE RENTA:
 - Fecha convenida de vencimiento: ${formatDate(activeDueDate)} (Día ${property.rentDueDay} de cada mes).
 - Días de gracia para pago sin recargos: ${property.graceDays} días (hasta el ${formatDate(graceDateStr)}).` : `• Renta mensual convenida (${activePeriod}): ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `• Utilidad de Agua (${isNextMonth ? 'Pendiente mes corriente' : 'Consumo factura anterior'}):   ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `• Utilidad Electricidad (LUMA / AEE) (${isNextMonth ? 'Pendiente mes corriente' : 'Consumo anterior'}): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `• Balances atrasados no pagados:            ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `• Cargo base por mora (tras ${property.graceDays} días de gracia): ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `• Demora diaria (${status.effectiveDailyDays ?? daysOverdue} días tras gracia${status.lateFeeCapNotice ? ` - ${status.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `• Pagos / Abonos aplicados:               -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
+${property.utilitiesWaterActive && waterAmount > 0 ? `• Utilidad de Agua (${isNextMonth ? 'Pendiente mes corriente' : 'Consumo factura anterior'}):   ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `• Utilidad de Electricidad (LUMA / AEE) (${isNextMonth ? 'Pendiente mes corriente' : 'Consumo anterior'}): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `• Balances atrasados no pagados:            ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `• Cargo base por mora (tras ${property.graceDays} días de gracia): ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `• Demora diaria (${status.effectiveDailyDays ?? daysOverdue} días tras gracia${status.lateFeeCapNotice ? ` - ${status.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `• Pagos / Abonos aplicados:               -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
 ${isCurrentPaid ? 'TOTAL LIQUIDADO:' : 'TOTAL A PAGAR:'}                             ${formatCurrency(isCurrentPaid ? paidAmount : totalDue, admin.currencySymbol)}
 ------------------------------------------------------
 BALANCES PENDIENTES SEGREGADOS:
 - Renta pendiente:                        ${formatCurrency(status.pendingRentBalance, admin.currencySymbol)}
-${property.utilitiesWaterActive ? `- Agua pendiente:                         ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `- Electricidad LUMA/AEE pendiente:        ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}\n` : ''}`}
+${property.utilitiesWaterActive ? `- Agua pendiente:                         ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `- Electricidad (LUMA / AEE) pendiente:    ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}\n` : ''}`}
 ${isNextMonth && isUtilityActive ? nextPeriodInfo?.hasUnpaidUtilities ? `\nNOTA SOBRE UTILIDADES:\nSe incluyen en el total a pagar las utilidades pendientes de liquidar del mes corriente (Agua: ${formatCurrency(waterAmount, admin.currencySymbol)}, Luz: ${formatCurrency(electricAmount, admin.currencySymbol)}). El consumo nuevo de este próximo ciclo variará según el consumo real y se notificará cuando los proveedores emitan la próxima factura.\n` : `\nNOTA SOBRE UTILIDADES:\nEn la última factura recibida el costo de utilidades fue de ${formatCurrency(lastMonthUtilitiesTotal, admin.currencySymbol)}${property.utilitiesWaterActive && property.utilitiesElectricActive ? ` (Agua: ${formatCurrency(lastMonthWater, admin.currencySymbol)}, Luz: ${formatCurrency(lastMonthElectric, admin.currencySymbol)})` : ''}. El costo para este próximo ciclo variará según el consumo real y se agregará una vez recibida la factura del proveedor.\n` : ''}${isNextMonth ? `\nRECORDATORIO IMPORTANTE:\nLe recordamos que el pago de su renta vence el ${formatDate(activeDueDate)}. Cuenta con ${property.graceDays} días de gracia para no generar recargos.\n` : ''}
 DATOS BANCARIOS PARA PAGO O TRANSFERENCIA:
 ${admin.bankDetails}
@@ -523,8 +523,10 @@ Tel: ${admin.phone} | ${admin.email}`;
     }
     if (activeShareTab !== 'preview') {
       setActiveShareTab('preview');
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
+    // Allow any pending layout/style recalculations to settle
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
     setIsGeneratingPdf(true);
     const docPrefix = isPaymentReceipt ? 'Recibo' : isCurrentPaid ? 'Comprobante' : isNextMonth ? 'Aviso' : 'Factura';
     await downloadElementAsPdf('printable-invoice', `${docPrefix}-${invoiceNumber}`);
@@ -1630,8 +1632,8 @@ Tel: ${admin.phone} | ${admin.email}`;
                             <Zap className="w-3.5 h-3.5 text-amber-600" />
                             <span>
                               {isNextMonth
-                                ? 'Utilidad de Electricidad LUMA / AEE (Pendiente de Liquidación Mes Corriente)'
-                                : 'Utilidad de Electricidad LUMA / AEE (Consumo Mes Anterior)'}
+                                ? 'Utilidad de Electricidad (LUMA / AEE) (Pendiente de Liquidación Mes Corriente)'
+                                : 'Utilidad de Electricidad (LUMA / AEE) (Consumo Mes Anterior)'}
                             </span>
                           </div>
                           <p className="text-[11px] text-amber-800">
@@ -1777,8 +1779,8 @@ Tel: ${admin.phone} | ${admin.email}`;
                   <div className="flex justify-between py-1 border-b border-slate-200 text-amber-800">
                     <span>
                       {isNextMonth
-                        ? 'Utilidad LUMA / AEE (Pendiente mes corriente):'
-                        : 'Utilidad Electricidad LUMA / AEE (Consumo anterior):'}
+                        ? 'Utilidad de Electricidad (LUMA / AEE) (Pendiente mes corriente):'
+                        : 'Utilidad de Electricidad (LUMA / AEE) (Consumo anterior):'}
                     </span>
                     <span className="font-medium">{formatCurrency(electricAmount, admin.currencySymbol)}</span>
                   </div>
@@ -1827,7 +1829,7 @@ Tel: ${admin.phone} | ${admin.email}`;
                       )}
                       {property.utilitiesElectricActive && (
                         <div className="flex justify-between text-amber-800">
-                          <span>Electricidad LUMA/AEE:</span>
+                          <span>Electricidad (LUMA / AEE):</span>
                           <span className="font-semibold">{formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}</span>
                         </div>
                       )}
@@ -1853,7 +1855,7 @@ Tel: ${admin.phone} | ${admin.email}`;
                         <div className="flex justify-between">
                           <span>Renta: {formatCurrency(status.pendingRentBalance, admin.currencySymbol)}</span>
                           {property.utilitiesWaterActive && <span>Agua: {formatCurrency(status.pendingWaterBalance, admin.currencySymbol)}</span>}
-                          {property.utilitiesElectricActive && <span>Luz: {formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}</span>}
+                          {property.utilitiesElectricActive && <span>Electricidad (LUMA / AEE): {formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}</span>}
                           {status.totalLateFees > 0 && <span>Mora: {formatCurrency(status.pendingLateFeesBalance, admin.currencySymbol)}</span>}
                         </div>
                       </div>
@@ -1886,14 +1888,14 @@ Tel: ${admin.phone} | ${admin.email}`;
                       Al no haberse registrado aún el pago de utilidades del mes corriente (
                       {nextPeriodInfo.unpaidWaterCurrent > 0 && <span>Agua: <strong>{formatCurrency(nextPeriodInfo.unpaidWaterCurrent, admin.currencySymbol)}</strong></span>}
                       {nextPeriodInfo.unpaidWaterCurrent > 0 && nextPeriodInfo.unpaidElectricCurrent > 0 && <span>, </span>}
-                      {nextPeriodInfo.unpaidElectricCurrent > 0 && <span>Luz LUMA/AEE: <strong>{formatCurrency(nextPeriodInfo.unpaidElectricCurrent, admin.currencySymbol)}</strong></span>}
+                      {nextPeriodInfo.unpaidElectricCurrent > 0 && <span>Electricidad (LUMA / AEE): <strong>{formatCurrency(nextPeriodInfo.unpaidElectricCurrent, admin.currencySymbol)}</strong></span>}
                       ), dicho importe se incluye en el desglose y se suma al balance total a pagar. Para el próximo ciclo de renta, el consumo nuevo se añadirá una vez se emita la respectiva factura del proveedor.
                     </>
                   ) : (
                     <>
                       En la última factura recibida el consumo de utilidades fue de <strong>{formatCurrency(lastMonthUtilitiesTotal, admin.currencySymbol)}</strong>
                       {property.utilitiesWaterActive && property.utilitiesElectricActive && (
-                        <span> (Agua: {formatCurrency(lastMonthWater, admin.currencySymbol)}, Luz LUMA/AEE: {formatCurrency(lastMonthElectric, admin.currencySymbol)})</span>
+                        <span> (Agua: {formatCurrency(lastMonthWater, admin.currencySymbol)}, Electricidad (LUMA / AEE): {formatCurrency(lastMonthElectric, admin.currencySymbol)})</span>
                       )}.
                       El costo para este próximo periodo es variable según el consumo real y <strong>no se suma a este total preliminar</strong>. Tan pronto los proveedores emitan la próxima factura se le indicará y agregará la cantidad exacta a pagar por dicho concepto.
                     </>
