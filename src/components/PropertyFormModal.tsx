@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Property, Tenant, Administrator } from '../types';
 import { loadAdministrators } from '../utils/storage';
-import { X, Building2, User, Phone, Calendar, DollarSign, AlertCircle, FileText, Droplets, Zap, Check, HelpCircle, ShieldAlert } from 'lucide-react';
+import { X, Building2, User, Phone, Calendar, DollarSign, AlertCircle, FileText, Droplets, Zap, Wrench, Check, HelpCircle, ShieldAlert } from 'lucide-react';
 
 interface PropertyFormModalProps {
   isOpen: boolean;
@@ -38,11 +38,13 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
   const [depositAmount, setDepositAmount] = useState<number | ''>('');
   const [notes, setNotes] = useState('');
 
-  // Utilidades Variables (Agua y Electricidad LUMA / AEE)
+  // Utilidades Variables (Agua, Electricidad LUMA / AEE, y Mantenimiento / Cuota)
   const [utilitiesWaterActive, setUtilitiesWaterActive] = useState<boolean>(false);
   const [utilitiesWaterAmount, setUtilitiesWaterAmount] = useState<number | ''>('');
   const [utilitiesElectricActive, setUtilitiesElectricActive] = useState<boolean>(false);
   const [utilitiesElectricAmount, setUtilitiesElectricAmount] = useState<number | ''>('');
+  const [utilitiesMaintenanceActive, setUtilitiesMaintenanceActive] = useState<boolean>(false);
+  const [utilitiesMaintenanceAmount, setUtilitiesMaintenanceAmount] = useState<number | ''>('');
 
   // Tenant 1
   const [tenant1Name, setTenant1Name] = useState('');
@@ -87,6 +89,8 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       setUtilitiesWaterAmount(initialProperty.utilitiesWaterAmount ?? '');
       setUtilitiesElectricActive(Boolean(initialProperty.utilitiesElectricActive));
       setUtilitiesElectricAmount(initialProperty.utilitiesElectricAmount ?? '');
+      setUtilitiesMaintenanceActive(Boolean(initialProperty.utilitiesMaintenanceActive));
+      setUtilitiesMaintenanceAmount(initialProperty.utilitiesMaintenanceAmount ?? '');
 
       setTenant1Name(initialProperty.tenant1?.name || '');
       setTenant1Phone(initialProperty.tenant1?.phone || '');
@@ -226,6 +230,8 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       utilitiesWaterAmount: utilitiesWaterActive && utilitiesWaterAmount !== '' ? Number(utilitiesWaterAmount) : 0,
       utilitiesElectricActive,
       utilitiesElectricAmount: utilitiesElectricActive && utilitiesElectricAmount !== '' ? Number(utilitiesElectricAmount) : 0,
+      utilitiesMaintenanceActive,
+      utilitiesMaintenanceAmount: utilitiesMaintenanceActive && utilitiesMaintenanceAmount !== '' ? Number(utilitiesMaintenanceAmount) : 0,
     };
 
     onSave(savedProp);
@@ -609,14 +615,14 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
               💡 Si se activan, se agregarán como concepto adicional a la renta en contratos y facturas. Al registrar pagos y calcular balances pendientes se mantendrán como <strong>partidas separadas</strong>. Puedes modificar manualmente el costo según el consumo de la factura del proveedor.
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* Utilidad 1: Agua */}
-              <div className={`p-3.5 rounded-xl border transition-all ${
+              <div className={`p-3 rounded-xl border transition-all ${
                 utilitiesWaterActive
                   ? 'bg-sky-50/70 dark:bg-sky-950/40 border-sky-300 dark:border-sky-800 ring-1 ring-sky-300/60 dark:ring-sky-800'
                   : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700'
               }`}>
-                <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-1.5">
                     <div className={`p-1.5 rounded-lg ${utilitiesWaterActive ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
                       <Droplets className="w-4 h-4" />
@@ -626,7 +632,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                         Agua Potable
                       </h4>
                       <span className="text-[10px] text-slate-400">
-                        {utilitiesWaterActive ? 'Cargo adicional activo' : 'No incluido'}
+                        {utilitiesWaterActive ? 'Activo' : 'No incluido'}
                       </span>
                     </div>
                   </div>
@@ -636,7 +642,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setUtilitiesWaterActive(true)}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition ${
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
                         utilitiesWaterActive
                           ? 'bg-sky-600 text-white shadow-2xs'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -646,27 +652,25 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setUtilitiesWaterActive(false);
-                      }}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition ${
+                      onClick={() => setUtilitiesWaterActive(false)}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
                         !utilitiesWaterActive
                           ? 'bg-slate-400 text-white shadow-2xs'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                       }`}
                     >
-                      No Aplica
+                      No
                     </button>
                   </div>
                 </div>
 
                 {utilitiesWaterActive && (
-                  <div className="mt-2.5 pt-2 border-t border-sky-200/80 dark:border-sky-800/60 space-y-1">
-                    <label className="block text-[11px] font-semibold text-sky-900 dark:text-sky-200">
-                      Costo mensual variable según consumo / factura ($)
+                  <div className="mt-2 pt-2 border-t border-sky-200/80 dark:border-sky-800/60 space-y-1">
+                    <label className="block text-[10px] font-semibold text-sky-900 dark:text-sky-200">
+                      Costo mensual ($)
                     </label>
                     <div className="relative">
-                      <span className="absolute left-3 top-2 text-sky-600 dark:text-sky-400 font-bold text-xs">$</span>
+                      <span className="absolute left-2.5 top-1.5 text-sky-600 dark:text-sky-400 font-bold text-xs">$</span>
                       <input
                         type="number"
                         min="0"
@@ -674,33 +678,30 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                         value={utilitiesWaterAmount}
                         onChange={(e) => setUtilitiesWaterAmount(e.target.value === '' ? '' : Number(e.target.value))}
                         placeholder="Ej: 350.00"
-                        className="w-full pl-7 pr-3 py-1.5 bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 rounded-lg text-xs font-bold text-sky-900 dark:text-sky-100 focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
+                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 rounded-lg text-xs font-bold text-sky-900 dark:text-sky-100 focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
                       />
                     </div>
-                    <span className="block text-[10px] text-slate-400">
-                      Modificable en cualquier momento al recibir la factura del proveedor.
-                    </span>
                   </div>
                 )}
               </div>
 
               {/* Utilidad 2: Electricidad (LUMA / AEE) */}
-              <div className={`p-3.5 rounded-xl border transition-all ${
+              <div className={`p-3 rounded-xl border transition-all ${
                 utilitiesElectricActive
                   ? 'bg-amber-50/70 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 ring-1 ring-amber-300/60 dark:ring-amber-800'
                   : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700'
               }`}>
-                <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-1.5">
                     <div className={`p-1.5 rounded-lg ${utilitiesElectricActive ? 'bg-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
                       <Zap className="w-4 h-4" />
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        Electricidad <span className="font-normal text-[10px] text-slate-500 dark:text-slate-400">(LUMA / AEE)</span>
+                        Electricidad
                       </h4>
                       <span className="text-[10px] text-slate-400">
-                        {utilitiesElectricActive ? 'Cargo adicional activo' : 'No incluido'}
+                        {utilitiesElectricActive ? 'Activo' : 'No incluido'}
                       </span>
                     </div>
                   </div>
@@ -710,7 +711,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setUtilitiesElectricActive(true)}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition ${
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
                         utilitiesElectricActive
                           ? 'bg-amber-600 text-white shadow-2xs'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -720,27 +721,25 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setUtilitiesElectricActive(false);
-                      }}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition ${
+                      onClick={() => setUtilitiesElectricActive(false)}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
                         !utilitiesElectricActive
                           ? 'bg-slate-400 text-white shadow-2xs'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                       }`}
                     >
-                      No Aplica
+                      No
                     </button>
                   </div>
                 </div>
 
                 {utilitiesElectricActive && (
-                  <div className="mt-2.5 pt-2 border-t border-amber-200/80 dark:border-amber-800/60 space-y-1">
-                    <label className="block text-[11px] font-semibold text-amber-900 dark:text-amber-200">
-                      Costo mensual variable según consumo / factura ($)
+                  <div className="mt-2 pt-2 border-t border-amber-200/80 dark:border-amber-800/60 space-y-1">
+                    <label className="block text-[10px] font-semibold text-amber-900 dark:text-amber-200">
+                      Costo mensual ($)
                     </label>
                     <div className="relative">
-                      <span className="absolute left-3 top-2 text-amber-600 dark:text-amber-400 font-bold text-xs">$</span>
+                      <span className="absolute left-2.5 top-1.5 text-amber-600 dark:text-amber-400 font-bold text-xs">$</span>
                       <input
                         type="number"
                         min="0"
@@ -748,12 +747,78 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                         value={utilitiesElectricAmount}
                         onChange={(e) => setUtilitiesElectricAmount(e.target.value === '' ? '' : Number(e.target.value))}
                         placeholder="Ej: 850.00"
-                        className="w-full pl-7 pr-3 py-1.5 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-lg text-xs font-bold text-amber-900 dark:text-amber-100 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-lg text-xs font-bold text-amber-900 dark:text-amber-100 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
                       />
                     </div>
-                    <span className="block text-[10px] text-slate-400">
-                      Modificable en cualquier momento según recibo de Electricidad (LUMA / AEE).
-                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Utilidad 3: Mantenimiento o Cuota de Residentes */}
+              <div className={`p-3 rounded-xl border transition-all ${
+                utilitiesMaintenanceActive
+                  ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-300 dark:border-purple-800 ring-1 ring-purple-300/60 dark:ring-purple-800'
+                  : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <div className={`p-1.5 rounded-lg ${utilitiesMaintenanceActive ? 'bg-purple-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                      <Wrench className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Mantenimiento / Cuota
+                      </h4>
+                      <span className="text-[10px] text-slate-400">
+                        {utilitiesMaintenanceActive ? 'Activo' : 'No incluido'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Botón Aplica / No Aplica */}
+                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200 dark:bg-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setUtilitiesMaintenanceActive(true)}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
+                        utilitiesMaintenanceActive
+                          ? 'bg-purple-600 text-white shadow-2xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                      }`}
+                    >
+                      Aplica
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUtilitiesMaintenanceActive(false)}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
+                        !utilitiesMaintenanceActive
+                          ? 'bg-slate-400 text-white shadow-2xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                      }`}
+                    >
+                      No
+                    </button>
+                  </div>
+                </div>
+
+                {utilitiesMaintenanceActive && (
+                  <div className="mt-2 pt-2 border-t border-purple-200/80 dark:border-purple-800/60 space-y-1">
+                    <label className="block text-[10px] font-semibold text-purple-900 dark:text-purple-200">
+                      Cuota mensual de residentes ($)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1.5 text-purple-600 dark:text-purple-400 font-bold text-xs">$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={utilitiesMaintenanceAmount}
+                        onChange={(e) => setUtilitiesMaintenanceAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="Ej: 50.00"
+                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-800 border border-purple-300 dark:border-purple-700 rounded-lg text-xs font-bold text-purple-900 dark:text-purple-100 focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
+                      />
+                    </div>
                   </div>
                 )}
               </div>

@@ -73,11 +73,13 @@ export interface Property {
   createdAt: string;
   updatedAt: string;
 
-  // Cargos variables adicionales por utilidades (Agua y Electricidad LUMA / AEE)
+  // Cargos variables adicionales por utilidades (Agua, Electricidad LUMA / AEE, y Mantenimiento / Cuota de Residentes)
   utilitiesWaterActive?: boolean; // Aplica o no cargo por Agua
   utilitiesWaterAmount?: number; // Costo variable según consumo/factura proveedor Agua
   utilitiesElectricActive?: boolean; // Aplica o no cargo por Electricidad (LUMA / AEE)
   utilitiesElectricAmount?: number; // Costo variable según consumo/factura proveedor Electricidad
+  utilitiesMaintenanceActive?: boolean; // Aplica o no cargo por Mantenimiento o Cuota de Residentes
+  utilitiesMaintenanceAmount?: number; // Monto por Mantenimiento / Cuota de Residentes
 
   // Políticas de morosidad y topes máximos por ciclo mensual
   lateFeeCapEnabled?: boolean; // Aplica o no tope máximo a la penalidad por morosidad en el mes
@@ -88,7 +90,7 @@ export interface Property {
 
 export type PaymentMethod = 'transferencia' | 'ath_movil' | 'efectivo' | 'deposito' | 'cheque' | 'tarjeta' | 'otro';
 
-export type PaymentConcept = 'renta' | 'deposito' | 'agua' | 'electricidad' | 'mora' | 'general';
+export type PaymentConcept = 'renta' | 'deposito' | 'agua' | 'electricidad' | 'mantenimiento' | 'mora' | 'general';
 
 export interface Payment {
   id: string;
@@ -109,6 +111,7 @@ export interface Payment {
   appliedToDeposit?: number; // Cubre depósito de garantía requerido en contrato
   appliedToWater?: number; // Remanente a Agua si fue seleccionada
   appliedToElectric?: number; // Remanente a Electricidad si fue seleccionada
+  appliedToMaintenance?: number; // Remanente a Mantenimiento/Cuota si fue seleccionada
   applicationFootnote?: string; // Nota al calce obligatoria de aplicación de fondos
 }
 
@@ -168,14 +171,16 @@ export interface PropertyFinancialStatus {
   // Desglose segregado de cargos de utilidades
   waterAmount: number; // Cargo del mes por Agua (0 si no aplica)
   electricAmount: number; // Cargo del mes por Electricidad (LUMA / AEE) (0 si no aplica)
-  totalUtilitiesAmount: number; // waterAmount + electricAmount
-  totalBilledThisMonth: number; // rentAmount + waterAmount + electricAmount
+  maintenanceAmount: number; // Cargo del mes por Mantenimiento o Cuota de Residentes (0 si no aplica)
+  totalUtilitiesAmount: number; // waterAmount + electricAmount + maintenanceAmount
+  totalBilledThisMonth: number; // rentAmount + waterAmount + electricAmount + maintenanceAmount
 
   // Desglose de pagos realizados este mes
   paidRentThisMonth: number;
   paidLateFeesThisMonth: number;
   paidWaterThisMonth: number;
   paidElectricThisMonth: number;
+  paidMaintenanceThisMonth: number;
   paidDepositThisMonth: number;
 
   // Depósito de garantía en contrato
@@ -188,7 +193,8 @@ export interface PropertyFinancialStatus {
   pendingLateFeesBalance: number; // Saldo pendiente Moras
   pendingWaterBalance: number; // Saldo pendiente Agua
   pendingElectricBalance: number; // Saldo pendiente Electricidad LUMA / AEE
-  pendingUtilitiesBalance: number; // Agua + Electricidad pendientes
+  pendingMaintenanceBalance: number; // Saldo pendiente Mantenimiento / Cuota de Residentes
+  pendingUtilitiesBalance: number; // Agua + Electricidad + Cuota pendientes
 }
 
 export interface InvoiceData {

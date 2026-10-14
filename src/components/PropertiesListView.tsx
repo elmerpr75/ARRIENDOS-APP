@@ -769,7 +769,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                         </div>
                         <span
                           className="text-[10px] text-slate-400 block truncate"
-                          title={`Agua: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)} | Electricidad (LUMA / AEE): ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}`}
+                          title={`Agua: ${formatCurrency(status.pendingWaterBalance, admin.currencySymbol)} | Electricidad: ${formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}`}
                         >
                           💧 {formatCurrency(status.pendingWaterBalance, admin.currencySymbol)} • ⚡ {formatCurrency(status.pendingElectricBalance, admin.currencySymbol)}
                         </span>
@@ -1051,7 +1051,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-amber-600" />
                     <span className="text-xs font-bold text-amber-950 dark:text-amber-200">
-                      Utilidad Electricidad (LUMA / AEE)
+                      Electricidad
                     </span>
                   </div>
                   {/* Aplica / No Aplica Toggle Button */}
@@ -1072,7 +1072,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                 {quickElectricActive && (
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                      Costo de factura de Electricidad (LUMA / AEE) según consumo del mes anterior ($):
+                      Costo de factura de Electricidad según consumo del mes anterior ($):
                     </label>
                     <input
                       type="number"

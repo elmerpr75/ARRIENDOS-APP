@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Droplets,
   Zap,
+  Wrench,
   Building2,
   FileText,
   Scale,
@@ -87,6 +88,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [payDeposit, setPayDeposit] = useState<string>('0');
   const [payWater, setPayWater] = useState<string>('0');
   const [payElectric, setPayElectric] = useState<string>('0');
+  const [payMaintenance, setPayMaintenance] = useState<string>('0');
 
   const [concept, setConcept] = useState<PaymentConcept>(defaultConcept);
   const [date, setDate] = useState('');
@@ -126,6 +128,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setPayDeposit(String(payment.appliedToDeposit || (payment.concept === 'deposito' ? payment.amount : 0)));
     setPayWater(String(payment.appliedToWater || (payment.concept === 'agua' ? payment.amount : 0)));
     setPayElectric(String(payment.appliedToElectric || (payment.concept === 'electricidad' ? payment.amount : 0)));
+    setPayMaintenance(String(payment.appliedToMaintenance || (payment.concept === 'mantenimiento' ? payment.amount : 0)));
 
     setConcept(payment.concept || 'renta');
     setDate(payment.date ? payment.date.split('T')[0] : new Date().toISOString().split('T')[0]);
@@ -325,7 +328,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const numDeposit = Math.max(0, parseFloat(payDeposit) || 0);
   const numWater = Math.max(0, parseFloat(payWater) || 0);
   const numElectric = Math.max(0, parseFloat(payElectric) || 0);
-  const totalEnteredAmount = Math.round((numLateFees + numRent + numDeposit + numWater + numElectric) * 100) / 100;
+  const numMaintenance = Math.max(0, parseFloat(payMaintenance) || 0);
+  const totalEnteredAmount = Math.round((numLateFees + numRent + numDeposit + numWater + numElectric + numMaintenance) * 100) / 100;
 
   // Shortcuts to fill in renglones
   const handleFillAllPending = () => {
@@ -335,6 +339,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setPayDeposit(String(currentStatus.pendingDepositBalance));
     setPayWater(String(currentProperty?.utilitiesWaterActive ? currentStatus.pendingWaterBalance : 0));
     setPayElectric(String(currentProperty?.utilitiesElectricActive ? currentStatus.pendingElectricBalance : 0));
+    setPayMaintenance(String(currentProperty?.utilitiesMaintenanceActive ? currentStatus.pendingMaintenanceBalance : 0));
     setConcept('general');
   };
 
@@ -607,15 +612,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     // Determine primary concept based on renglones filled
     let determinedConcept: PaymentConcept = concept;
-    if (numRent > 0 && numLateFees === 0 && numWater === 0 && numElectric === 0 && numDeposit === 0) {
+    if (numRent > 0 && numLateFees === 0 && numWater === 0 && numElectric === 0 && numMaintenance === 0 && numDeposit === 0) {
       determinedConcept = 'renta';
-    } else if (numDeposit > 0 && numRent === 0 && numWater === 0 && numElectric === 0 && numLateFees === 0) {
+    } else if (numDeposit > 0 && numRent === 0 && numWater === 0 && numElectric === 0 && numMaintenance === 0 && numLateFees === 0) {
       determinedConcept = 'deposito';
-    } else if (numWater > 0 && numLateFees === 0 && numRent === 0 && numElectric === 0 && numDeposit === 0) {
+    } else if (numWater > 0 && numLateFees === 0 && numRent === 0 && numElectric === 0 && numMaintenance === 0 && numDeposit === 0) {
       determinedConcept = 'agua';
-    } else if (numElectric > 0 && numLateFees === 0 && numRent === 0 && numWater === 0 && numDeposit === 0) {
+    } else if (numElectric > 0 && numLateFees === 0 && numRent === 0 && numWater === 0 && numMaintenance === 0 && numDeposit === 0) {
       determinedConcept = 'electricidad';
-    } else if (numLateFees > 0 && numRent === 0 && numWater === 0 && numElectric === 0 && numDeposit === 0) {
+    } else if (numMaintenance > 0 && numLateFees === 0 && numRent === 0 && numWater === 0 && numElectric === 0 && numDeposit === 0) {
+      determinedConcept = 'mantenimiento';
+    } else if (numLateFees > 0 && numRent === 0 && numWater === 0 && numElectric === 0 && numMaintenance === 0 && numDeposit === 0) {
       determinedConcept = 'mora';
     } else {
       determinedConcept = 'general';
@@ -628,6 +635,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     if (numDeposit > 0) breakdownParts.push(`Depósito en contrato: ${formatCurrency(numDeposit, admin.currencySymbol)}`);
     if (numWater > 0) breakdownParts.push(`Agua: ${formatCurrency(numWater, admin.currencySymbol)}`);
     if (numElectric > 0) breakdownParts.push(`Electricidad (LUMA / AEE): ${formatCurrency(numElectric, admin.currencySymbol)}`);
+    if (numMaintenance > 0) breakdownParts.push(`Mantenimiento / Cuota: ${formatCurrency(numMaintenance, admin.currencySymbol)}`);
 
     const applicationFootnote = `Desglose de recepción: ${breakdownParts.join(', ')}. Detallado y certificado por la administración.`;
 
@@ -649,6 +657,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       appliedToDeposit: numDeposit,
       appliedToWater: numWater,
       appliedToElectric: numElectric,
+      appliedToMaintenance: numMaintenance,
       applicationFootnote,
     };
 
@@ -1130,6 +1139,64 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                           onClick={() => setPayElectric(String(currentStatus.pendingElectricBalance))}
                           className="px-2 py-1.5 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 text-amber-700 dark:text-amber-300 rounded-lg text-[10px] font-bold border border-amber-200 dark:border-amber-800 transition"
                           title="Cubrir saldo de electricidad"
+                        >
+                          Todo
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Renglón 6: Mantenimiento o Cuota de Residentes */}
+                {currentProperty?.utilitiesMaintenanceActive && (
+                  <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-purple-200 dark:border-purple-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 rounded-lg bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
+                          <Wrench className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-purple-950 dark:text-purple-200">
+                              6. Mantenimiento / Cuota de Residentes
+                            </span>
+                            <span className="px-1.5 py-0.2 bg-purple-600 text-white rounded text-[9px] font-bold">
+                              Cuenta Separada
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-purple-800 dark:text-purple-300">
+                            Cuota mensual:{' '}
+                            <strong className="font-bold">
+                              {currentStatus ? formatCurrency(currentStatus.maintenanceAmount, admin.currencySymbol) : '-'}
+                            </strong>
+                            {' • '}Balance adeudado:{' '}
+                            <strong className="font-bold text-purple-700 dark:text-purple-300">
+                              {currentStatus ? formatCurrency(currentStatus.pendingMaintenanceBalance, admin.currencySymbol) : '-'}
+                            </strong>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                      <span className="text-xs text-slate-400 font-medium">Abono:</span>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-2 text-xs font-bold text-slate-400">{admin.currencySymbol}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={payMaintenance}
+                          onChange={(e) => setPayMaintenance(e.target.value)}
+                          className="w-32 pl-7 pr-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-purple-300 dark:border-purple-700 rounded-xl text-xs font-bold text-purple-700 dark:text-purple-300 focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
+                        />
+                      </div>
+                      {currentStatus && currentStatus.pendingMaintenanceBalance > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setPayMaintenance(String(currentStatus.pendingMaintenanceBalance))}
+                          className="px-2 py-1.5 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 text-purple-700 dark:text-purple-300 rounded-lg text-[10px] font-bold border border-purple-200 dark:border-purple-800 transition"
+                          title="Cubrir saldo de mantenimiento"
                         >
                           Todo
                         </button>

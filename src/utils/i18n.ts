@@ -57,6 +57,7 @@ export const translations = {
     // Nav Tabs
     tabProperties: 'Propiedades & Inquilinos',
     tabTracking: 'Control Financiero & Cobranza',
+    tabAudit: 'Libro Contable & Fiscalización',
     tabReminders: 'Recordatorios & Alertas',
     tabReports: 'Estado de Cuenta General',
 
@@ -207,6 +208,7 @@ export const translations = {
     // Nav Tabs
     tabProperties: 'Properties & Tenants',
     tabTracking: 'Financial Tracking & Billing',
+    tabAudit: 'Accounting Ledger & Audit',
     tabReminders: 'Reminders & Alerts',
     tabReports: 'General Statement',
 

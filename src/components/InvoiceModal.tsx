@@ -237,10 +237,11 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
 
   // Financial breakdown depending on invoice mode
   const rent = property.rentAmount;
-  const isUtilityActive = Boolean(property.utilitiesWaterActive || property.utilitiesElectricActive);
+  const isUtilityActive = Boolean(property.utilitiesWaterActive || property.utilitiesElectricActive || property.utilitiesMaintenanceActive);
   const lastMonthWater = property.utilitiesWaterActive ? Math.max(0, Number(property.utilitiesWaterAmount) || 0) : 0;
   const lastMonthElectric = property.utilitiesElectricActive ? Math.max(0, Number(property.utilitiesElectricAmount) || 0) : 0;
-  const lastMonthUtilitiesTotal = lastMonthWater + lastMonthElectric;
+  const lastMonthMaintenance = property.utilitiesMaintenanceActive ? Math.max(0, Number(property.utilitiesMaintenanceAmount) || 0) : 0;
+  const lastMonthUtilitiesTotal = lastMonthWater + lastMonthElectric + lastMonthMaintenance;
 
   // Active rent charge for this invoice:
   // - If isNextMonth (advance notice): rent IS included because it informs the upcoming due date
@@ -256,6 +257,9 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   const electricAmount = isNextMonth
     ? (nextPeriodInfo?.unpaidElectricCurrent || 0)
     : status.electricAmount;
+  const maintenanceAmount = isNextMonth
+    ? (nextPeriodInfo?.unpaidMaintenanceCurrent || 0)
+    : status.maintenanceAmount;
 
   const prevBalance = isNextMonth
     ? nextPeriodInfo?.accumulatedPreviousBalance || 0
@@ -359,7 +363,7 @@ Estimado/a *${recipientName}*, le enviamos con anticipación los datos correspon
 
 💰 *DESGLOSE DE CARGOS:*
 ▪️ Renta convenida en contrato: ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `💧 Utilidad de Agua (Pendiente mes corriente): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ Utilidad LUMA / AEE (Pendiente mes corriente): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Saldo pendiente anterior acumulado: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos anticipados registrados: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && waterAmount > 0 ? `💧 Utilidad de Agua (Pendiente mes corriente): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ Utilidad de Electricidad (Pendiente mes corriente): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `🛠️ Cuota de Mantenimiento (Pendiente mes corriente): ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Saldo pendiente anterior acumulado: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos anticipados registrados: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL PRELIMINAR A PAGAR: ${formatCurrency(totalDue, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -407,7 +411,7 @@ ${admin.invoiceNote ? `Nota: ${admin.invoiceNote}\n\n` : ''}🙏 Muchas gracias 
 💰 *DESGLOSE DE CARGOS AL DÍA DE HOY:*
 ▪️ Renta mensual pactada: ${formatCurrency(rent, admin.currencySymbol)} (Aún no exigible - Su ciclo inicia el ${formatDate(activeDueDate)})
 ▪️ Cargo de renta exigible hoy: ${formatCurrency(0, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `💧 Utilidad de Agua (Consumo factura proveedor): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ Utilidad Electricidad LUMA / AEE (Consumo factura proveedor): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Balances atrasados no pagados de meses anteriores: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos registrados: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && waterAmount > 0 ? `💧 Utilidad de Agua (Consumo factura proveedor): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ Utilidad de Electricidad (Consumo factura proveedor): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `🛠️ Cuota de Mantenimiento: ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Balances atrasados no pagados de meses anteriores: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos registrados: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL ACTUAL A PAGAR: ${formatCurrency(totalDue, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1647,6 +1651,32 @@ Tel: ${admin.phone} | ${admin.email}`;
                         </td>
                         <td className="py-2.5 px-3 text-right font-semibold text-amber-900">
                           {formatCurrency(electricAmount, admin.currencySymbol)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* 3.1 Maintenance / Cuota (if active) */}
+                    {property.utilitiesMaintenanceActive && maintenanceAmount > 0 && (
+                      <tr className="bg-purple-50/40">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-purple-900">
+                              {isNextMonth
+                                ? 'Cuota de Mantenimiento / Residentes (Pendiente Mes Corriente)'
+                                : 'Mantenimiento / Cuota de Residentes'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-purple-800">
+                            {isNextMonth
+                              ? 'Cuota de mantenimiento pendiente del mes corriente'
+                              : 'Cuota contractual de mantenimiento de áreas comunes y residentes'}
+                          </p>
+                        </td>
+                        <td className="py-2.5 px-3 text-center text-purple-800">
+                          {isNextMonth ? 'Mes corriente' : 'Cuota mensual'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-semibold text-purple-900">
+                          {formatCurrency(maintenanceAmount, admin.currencySymbol)}
                         </td>
                       </tr>
                     )}

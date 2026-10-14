@@ -23,6 +23,7 @@ import { PropertiesListView } from './components/PropertiesListView';
 import { TrackingView } from './components/TrackingView';
 import { RemindersView } from './components/RemindersView';
 import { StatusReportView } from './components/StatusReportView';
+import { AccountingAuditView } from './components/AccountingAuditView';
 import { PropertyFormModal } from './components/PropertyFormModal';
 import { PaymentModal } from './components/PaymentModal';
 import { InvoiceModal } from './components/InvoiceModal';
@@ -48,6 +49,7 @@ import {
   DollarSign,
   Bell,
   FileSpreadsheet,
+  Scale,
   Settings,
   PlusCircle,
   FileText,
@@ -87,7 +89,7 @@ export default function App() {
   };
 
   // Active View Tab
-  const [activeTab, setActiveTab] = useState<'properties' | 'tracking' | 'reminders' | 'report'>('properties');
+  const [activeTab, setActiveTab] = useState<'properties' | 'tracking' | 'audit' | 'reminders' | 'report'>('properties');
 
   // Modals
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
@@ -563,6 +565,19 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('audit')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition ${
+              activeTab === 'audit'
+                ? 'bg-sky-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Libro de contabilidad segregado: Rentas, utilidades, moras y penalizaciones con exportación a PDF"
+          >
+            <Scale className="w-4 h-4" />
+            <span>{t.tabAudit}</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('reminders')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition relative ${
               activeTab === 'reminders'
@@ -624,6 +639,17 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'audit' && (
+          <AccountingAuditView
+            properties={properties}
+            payments={payments}
+            administrators={administrators}
+            profile={profile}
+            onOpenInvoice={handleOpenInvoice}
+            onRegisterPayment={handleOpenPayment}
+          />
+        )}
+
         {activeTab === 'reminders' && (
           <RemindersView
             properties={properties}
@@ -668,7 +694,17 @@ export default function App() {
           }`}
         >
           <DollarSign className="w-5 h-5 mb-0.5" />
-          <span>{currentLang === 'es' ? 'Seguimiento' : 'Tracking'}</span>
+          <span>{currentLang === 'es' ? 'Cobranza' : 'Tracking'}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('audit')}
+          className={`flex flex-col items-center py-1 px-2 rounded-lg transition ${
+            activeTab === 'audit' ? 'text-sky-400 font-bold' : 'hover:text-slate-200'
+          }`}
+        >
+          <Scale className="w-5 h-5 mb-0.5" />
+          <span>{currentLang === 'es' ? 'Libro' : 'Ledger'}</span>
         </button>
 
         <button

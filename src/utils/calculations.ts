@@ -1,6 +1,25 @@
 import { Property, Payment, PropertyFinancialStatus, CURRENCY_OPTIONS, PaymentConcept } from '../types';
 import { getSavedLanguage, SupportedLanguage } from './i18n';
 
+/**
+ * Parses a YYYY-MM-DD or ISO date string safely into local midnight Date
+ * without negative timezone offset shifts (e.g. UTC shifting 1 day earlier).
+ */
+export function parseLocalDate(dateString?: string): Date {
+  if (!dateString) return new Date();
+  try {
+    const clean = dateString.split('T')[0];
+    const parts = clean.split('-').map(Number);
+    if (parts.length >= 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+    }
+  } catch {
+    // fallback
+  }
+  const d = new Date(dateString);
+  return isNaN(d.getTime()) ? new Date() : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
 export function getCurrencySymbol(codeOrSymbol?: string): string {
   if (!codeOrSymbol) return '$'; // US Dollar default
   const found = CURRENCY_OPTIONS.find(
@@ -79,8 +98,9 @@ export interface LateFeeCalculationResult {
 
 /**
  * Computes monthly late fee according to lease contract terms:
- * - Grace period counts payment due day as day 1. E.g. Due day 10, grace 5 days:
- *   Day 15 is within grace (0 penalty). Day 16 is 1 day of delay ($20 base + $5*1 = $25).
+ * - Payment day: rentDueDay of month (e.g. Day 15).
+ * - Grace period: graceDays without penalty (e.g. 5 days: days 15..20 are penalty-free).
+ * - Delinquency only starts AFTER grace period ends (e.g. Day 21 is Day 1 of delay).
  * - Optional cap (tope) per month:
  *   a) By maximum monetary amount (e.g. up to $75/month)
  *   b) By maximum computable delay days (e.g. up to 10 days beyond grace)
@@ -111,20 +131,15 @@ export function computeMonthlyLateFee(
   // Due date for the specific cycle
   const lastDayOfCycleMonth = new Date(year, month + 1, 0).getDate();
   const clampedDueDay = Math.min(dueDay, lastDayOfCycleMonth);
-  const dueDate = new Date(year, month, clampedDueDay);
+  const dueDate = new Date(year, month, clampedDueDay, 0, 0, 0, 0);
 
-  // Grace date (inclusive):
-  // "contando el día de pago como el primer día del período de gracia"
-  // Due date + graceDays = end of grace period. E.g. day 10 + 5 days = day 15.
+  // Grace date (inclusive deadline):
+  // E.g. Due day 15 + grace 5 days = end of day 20 (up to 20th included without penalty).
   const graceDays = Math.max(0, Number(property.graceDays) ?? 3);
-  const graceDate = new Date(dueDate);
-  graceDate.setDate(graceDate.getDate() + graceDays);
+  const graceMidnightMs = new Date(year, month, clampedDueDay + graceDays, 0, 0, 0, 0).getTime();
+  const evalMidnight = new Date(evaluationDate.getFullYear(), evaluationDate.getMonth(), evaluationDate.getDate(), 0, 0, 0, 0).getTime();
 
-  const evalMidnight = new Date(evaluationDate.getFullYear(), evaluationDate.getMonth(), evaluationDate.getDate()).getTime();
-  const graceMidnight = new Date(graceDate.getFullYear(), graceDate.getMonth(), graceDate.getDate()).getDate();
-  const graceMidnightMs = new Date(graceDate.getFullYear(), graceDate.getMonth(), graceDate.getDate()).getTime();
-
-  // If on or before grace date, not overdue
+  // If on or before grace date (or before due date), NOT overdue
   if (evalMidnight <= graceMidnightMs) {
     return {
       isOverdue: false,
@@ -136,7 +151,7 @@ export function computeMonthlyLateFee(
     };
   }
 
-  // Days overdue beyond the grace period
+  // Days overdue strictly beyond the grace period
   const diffDays = Math.max(1, Math.round((evalMidnight - graceMidnightMs) / (1000 * 60 * 60 * 24)));
   const daysOverdue = diffDays;
 
@@ -191,33 +206,39 @@ export function computeMonthlyLateFee(
 
 /**
  * Calculates complete financial and contract status for a property,
- * segregating rent, late fees, water and electricity charges and payments.
+ * segregating rent, late fees, water, electricity, and maintenance charges and payments.
  */
 export function calculatePropertyStatus(
   property: Property,
   payments: Payment[],
   referenceDate: Date = new Date()
 ): PropertyFinancialStatus {
-  const currentYear = referenceDate.getFullYear();
-  const currentMonth = referenceDate.getMonth(); // 0-11
+  const refDateLocal = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate(),
+    0, 0, 0, 0
+  );
+  const currentYear = refDateLocal.getFullYear();
+  const currentMonth = refDateLocal.getMonth(); // 0-11
   
   // Due date for current month
   // If rentDueDay exceeds month days, clamp to last day of month
   const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
   const dueDay = Math.min(property.rentDueDay || 1, lastDayOfMonth);
-  const currentDueDate = new Date(currentYear, currentMonth, dueDay);
+  const currentDueDate = new Date(currentYear, currentMonth, dueDay, 0, 0, 0, 0);
   
   // Format due date YYYY-MM-DD
   const dueDateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
 
-  // Grace date (inclusive)
-  const graceDays = property.graceDays ?? 3;
-  const graceDate = new Date(currentDueDate);
-  graceDate.setDate(graceDate.getDate() + graceDays);
+  // Grace date (inclusive):
+  // E.g. Due day 15 + grace 5 days = end of day 20 (penalty-free through day 20).
+  const graceDays = Math.max(0, property.graceDays ?? 3);
+  const graceMidnightMs = new Date(currentYear, currentMonth, dueDay + graceDays, 0, 0, 0, 0).getTime();
 
   // Contract calculation
-  const contractEnd = new Date(property.contractEndDate);
-  const contractDaysLeft = getDaysDifference(contractEnd, referenceDate);
+  const contractEnd = parseLocalDate(property.contractEndDate);
+  const contractDaysLeft = getDaysDifference(contractEnd, refDateLocal);
   
   let contractStatus: 'vigente' | 'por_renovar' | 'vencido' = 'vigente';
   if (contractDaysLeft < 0) {
@@ -232,43 +253,38 @@ export function calculatePropertyStatus(
   
   // Sort payments by date descending
   const sortedPayments = [...propPayments].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    (a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime()
   );
   const lastPayment = sortedPayments[0];
 
   // Current period payments (matching year and month or period name)
-  const currentPeriod = getCurrentPeriodName(referenceDate);
+  const currentPeriod = getCurrentPeriodName(refDateLocal);
   const paymentsThisMonth = propPayments.filter((p) => {
-    if (p.period === currentPeriod) return true;
-    const pDate = new Date(p.date);
+    if (p.period && p.period.toLowerCase().trim() === currentPeriod.toLowerCase().trim()) return true;
+    const pDate = parseLocalDate(p.date);
     return pDate.getFullYear() === currentYear && pDate.getMonth() === currentMonth;
   });
   const totalPaidThisMonth = paymentsThisMonth.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
   // Check if reference date has reached or passed the agreed monthly rent due day:
   // e.g. If due day is the 15th, before the 15th (days 1-14) the current month's rent has NOT yet matured/exigible.
-  const evalMidnight = new Date(currentYear, currentMonth, referenceDate.getDate()).getTime();
-  const dueMidnight = new Date(currentYear, currentMonth, dueDay).getTime();
+  const evalMidnight = refDateLocal.getTime();
+  const dueMidnight = currentDueDate.getTime();
   const isRentDueReached = evalMidnight >= dueMidnight;
+
+  // Is within contractual grace period (e.g. days 15-20 when due day is 15 with 5 grace days)?
+  const isWithinGrace = isRentDueReached && evalMidnight <= graceMidnightMs;
 
   // Current month rent charge:
   // ONLY billed/charged as active debt once the due day is reached or exceeded.
   const currentMonthRentCharge = isRentDueReached ? property.rentAmount : 0;
 
-  // Utility charges for this property (variable according to monthly bill)
+  // Utility charges for this property (kept strictly in separate accounts)
   const waterAmount = property.utilitiesWaterActive ? Math.max(0, Number(property.utilitiesWaterAmount) || 0) : 0;
   const electricAmount = property.utilitiesElectricActive ? Math.max(0, Number(property.utilitiesElectricAmount) || 0) : 0;
-  const totalUtilitiesAmount = waterAmount + electricAmount;
+  const maintenanceAmount = property.utilitiesMaintenanceActive ? Math.max(0, Number(property.utilitiesMaintenanceAmount) || 0) : 0;
+  const totalUtilitiesAmount = waterAmount + electricAmount + maintenanceAmount;
   const totalBilledThisMonth = currentMonthRentCharge + totalUtilitiesAmount;
-
-  // Determine months elapsed since contract start (capped to reference date)
-  const contractStart = new Date(property.contractStartDate || referenceDate);
-  let monthsElapsed = 1;
-  if (!isNaN(contractStart.getTime())) {
-    const diffMonths = (currentYear - contractStart.getFullYear()) * 12 + (currentMonth - contractStart.getMonth());
-    // If no payments have been registered in the system yet for this property, don't generate retroactive debt
-    monthsElapsed = propPayments.length > 0 ? Math.max(1, diffMonths + 1) : 1;
-  }
 
   // Segregated breakdown of all-time payments for deposit and rent tracking:
   let totalDepositPaid = 0;
@@ -277,13 +293,13 @@ export function calculatePropertyStatus(
     const amt = Number(pay.amount) || 0;
     if (pay.appliedToRent !== undefined || pay.appliedToLateFees !== undefined ||
         pay.appliedToWater !== undefined || pay.appliedToElectric !== undefined ||
-        pay.appliedToDeposit !== undefined) {
+        pay.appliedToMaintenance !== undefined || pay.appliedToDeposit !== undefined) {
       totalRentPaidAllTime += Number(pay.appliedToRent) || 0;
       totalDepositPaid += Number(pay.appliedToDeposit) || 0;
     } else {
       if (pay.concept === 'deposito') {
         totalDepositPaid += amt;
-      } else if (pay.concept !== 'agua' && pay.concept !== 'electricidad') {
+      } else if (pay.concept !== 'agua' && pay.concept !== 'electricidad' && pay.concept !== 'mantenimiento') {
         totalRentPaidAllTime += amt;
       }
     }
@@ -297,17 +313,19 @@ export function calculatePropertyStatus(
   let paidLateFeesThisMonth = 0;
   let paidWaterThisMonth = 0;
   let paidElectricThisMonth = 0;
+  let paidMaintenanceThisMonth = 0;
   let paidDepositThisMonth = 0;
 
   for (const pay of paymentsThisMonth) {
     const amt = Number(pay.amount) || 0;
     if (pay.appliedToRent !== undefined || pay.appliedToLateFees !== undefined ||
         pay.appliedToWater !== undefined || pay.appliedToElectric !== undefined ||
-        pay.appliedToDeposit !== undefined) {
+        pay.appliedToMaintenance !== undefined || pay.appliedToDeposit !== undefined) {
       paidRentThisMonth += Number(pay.appliedToRent) || 0;
       paidLateFeesThisMonth += Number(pay.appliedToLateFees) || 0;
       paidWaterThisMonth += Number(pay.appliedToWater) || 0;
       paidElectricThisMonth += Number(pay.appliedToElectric) || 0;
+      paidMaintenanceThisMonth += Number(pay.appliedToMaintenance) || 0;
       paidDepositThisMonth += Number(pay.appliedToDeposit) || 0;
     } else {
       // Legacy or unpartitioned payment: attribute according to pay.concept
@@ -315,8 +333,12 @@ export function calculatePropertyStatus(
         paidWaterThisMonth += amt;
       } else if (pay.concept === 'electricidad') {
         paidElectricThisMonth += amt;
+      } else if (pay.concept === 'mantenimiento') {
+        paidMaintenanceThisMonth += amt;
       } else if (pay.concept === 'deposito') {
         paidDepositThisMonth += amt;
+      } else if (pay.concept === 'mora') {
+        paidLateFeesThisMonth += amt;
       } else {
         // Default to rent
         paidRentThisMonth += amt;
@@ -324,15 +346,21 @@ export function calculatePropertyStatus(
     }
   }
 
-  // Determine late fee for current month (evaluated ONLY if rent due day has arrived)
+  // Determine late fee for current month:
+  // Evaluated ONLY IF:
+  // 1. Rent due day has arrived (isRentDueReached)
+  // 2. We have EXCEEDED the contractual grace period (!isWithinGrace, evalMidnight > graceMidnightMs)
+  // 3. There is an unpaid rent balance for the current cycle
   const pendingRentUnadjusted = isRentDueReached ? Math.max(0, property.rentAmount - paidRentThisMonth) : 0;
-  const currentLateFeeResult = isRentDueReached
+  const shouldComputeLateFees = isRentDueReached && !isWithinGrace && pendingRentUnadjusted > 0;
+
+  const currentLateFeeResult = shouldComputeLateFees
     ? computeMonthlyLateFee(
         property,
         dueDay,
         currentYear,
         currentMonth,
-        referenceDate,
+        refDateLocal,
         pendingRentUnadjusted
       )
     : {
@@ -353,60 +381,87 @@ export function calculatePropertyStatus(
   const lateFeeCapNotice = currentLateFeeResult.cappedNotice;
 
   // Previous rent balance calculation:
-  // Each past month that remained unpaid accumulates its monthly rent plus that month's
-  // late fee (up to the monthly cap). The cap resets to zero each new month.
-  // We exclude deposit payments so deposit funds are not miscalculated as rent.
-  const rentAndFeesPriorPayments = Math.max(0, (totalAllPayments - totalDepositPaid) - (totalPaidThisMonth - paidDepositThisMonth));
-  const paymentsPrior = rentAndFeesPriorPayments;
-  let remainingPriorPayments = paymentsPrior;
-  let accumulatedPriorBilled = 0;
+  // Only counts past cycles if the contract actually commenced in a prior month
+  // and those prior cycles matured without full payment.
+  // Utilities are kept in separate accounts and NEVER mixed with prior rent debt.
+  let previousBalance = 0;
+  const contractStart = parseLocalDate(property.contractStartDate);
 
-  if (monthsElapsed > 1) {
+  if (!isNaN(contractStart.getTime())) {
     const startYear = contractStart.getFullYear();
     const startMonth = contractStart.getMonth();
+    const startDay = contractStart.getDate();
 
-    for (let m = 0; m < monthsElapsed - 1; m++) {
-      const totalMonthIndex = startMonth + m;
-      const pastYear = startYear + Math.floor(totalMonthIndex / 12);
-      const pastMonth = totalMonthIndex % 12;
-      const monthlyRent = property.rentAmount;
+    // Check how many prior billing cycles existed before currentYear / currentMonth
+    const diffMonths = (currentYear - startYear) * 12 + (currentMonth - startMonth);
 
-      if (remainingPriorPayments >= monthlyRent) {
-        remainingPriorPayments -= monthlyRent;
-        accumulatedPriorBilled += monthlyRent;
-      } else {
-        const unpaidPastRent = monthlyRent - remainingPriorPayments;
-        remainingPriorPayments = 0;
-        const pastMonthEnd = new Date(pastYear, pastMonth + 1, 0);
-        const pastLateResult = computeMonthlyLateFee(
-          property,
-          dueDay,
-          pastYear,
-          pastMonth,
-          pastMonthEnd,
-          unpaidPastRent
-        );
-        accumulatedPriorBilled += monthlyRent + pastLateResult.totalLateFee;
+    // If contract start day was after the agreed due day of that month, the first cycle is next month
+    const adjustedDiffMonths = startDay > dueDay ? Math.max(0, diffMonths - 1) : Math.max(0, diffMonths);
+
+    // Only compute prior cycle debt if there were legitimate elapsed cycles before the current month
+    if (adjustedDiffMonths > 0) {
+      // Prior rent payments (excluding current month payments and excluding deposits and utilities)
+      const priorRentPayments = propPayments
+        .filter((p) => {
+          const pDate = parseLocalDate(p.date);
+          const isThisMonth = pDate.getFullYear() === currentYear && pDate.getMonth() === currentMonth;
+          return !isThisMonth;
+        })
+        .reduce((sum, p) => {
+          if (p.appliedToRent !== undefined) return sum + (Number(p.appliedToRent) || 0);
+          if (p.concept === 'renta') return sum + (Number(p.amount) || 0);
+          if (!p.concept && p.concept !== 'agua' && p.concept !== 'electricidad' && p.concept !== 'mantenimiento' && p.concept !== 'deposito') {
+            return sum + (Number(p.amount) || 0);
+          }
+          return sum;
+        }, 0);
+
+      let remainingPriorRent = priorRentPayments;
+      let accumulatedPriorBilled = 0;
+
+      for (let m = 0; m < adjustedDiffMonths; m++) {
+        const totalMonthIndex = (startDay > dueDay ? startMonth + 1 : startMonth) + m;
+        const pastYear = startYear + Math.floor(totalMonthIndex / 12);
+        const pastMonth = totalMonthIndex % 12;
+        const monthlyRent = property.rentAmount;
+
+        if (remainingPriorRent >= monthlyRent) {
+          remainingPriorRent -= monthlyRent;
+          accumulatedPriorBilled += monthlyRent;
+        } else {
+          const unpaidPastRent = monthlyRent - remainingPriorRent;
+          remainingPriorRent = 0;
+          const pastMonthEnd = new Date(pastYear, pastMonth + 1, 0, 0, 0, 0, 0);
+          const pastLateResult = computeMonthlyLateFee(
+            property,
+            dueDay,
+            pastYear,
+            pastMonth,
+            pastMonthEnd,
+            unpaidPastRent
+          );
+          accumulatedPriorBilled += monthlyRent + pastLateResult.totalLateFee;
+        }
       }
+      previousBalance = Math.max(0, accumulatedPriorBilled - priorRentPayments);
     }
   }
 
-  const previousBalance = Math.max(0, accumulatedPriorBilled - paymentsPrior);
-
-  // Segregated pending balances:
-  // Notice: If due day has not arrived (e.g. today is Oct 4, due day is Oct 15), current month rent is not added yet!
+  // Segregated pending balances (Separate accounts):
+  // If due day has not arrived (e.g. today is Oct 14, due day is Oct 15), current month rent is 0!
   const pendingLateFeesBalance = Math.max(0, totalLateFees - paidLateFeesThisMonth);
   const pendingRentBalance = Math.max(0, previousBalance + currentMonthRentCharge - paidRentThisMonth);
   const pendingWaterBalance = Math.max(0, waterAmount - paidWaterThisMonth);
   const pendingElectricBalance = Math.max(0, electricAmount - paidElectricThisMonth);
-  const pendingUtilitiesBalance = pendingWaterBalance + pendingElectricBalance;
+  const pendingMaintenanceBalance = Math.max(0, maintenanceAmount - paidMaintenanceThisMonth);
+  const pendingUtilitiesBalance = pendingWaterBalance + pendingElectricBalance + pendingMaintenanceBalance;
 
   // Total pending balance = late fees + rent + utilities
   const totalPendingBalance = pendingLateFeesBalance + pendingRentBalance + pendingUtilitiesBalance;
 
   let accountStatus: 'al_dia' | 'proximo_vencer' | 'atrasado' | 'con_saldo_favor' = 'al_dia';
   if (totalPendingBalance <= 0) {
-    if (totalAllPayments > accumulatedPriorBilled + currentMonthRentCharge + totalLateFees + totalUtilitiesAmount) {
+    if (totalAllPayments > previousBalance + currentMonthRentCharge + totalLateFees + totalUtilitiesAmount) {
       accountStatus = 'con_saldo_favor';
     } else {
       accountStatus = 'al_dia';
@@ -443,6 +498,7 @@ export function calculatePropertyStatus(
     // Segregated utilities
     waterAmount,
     electricAmount,
+    maintenanceAmount,
     totalUtilitiesAmount,
     totalBilledThisMonth,
 
@@ -451,6 +507,7 @@ export function calculatePropertyStatus(
     paidLateFeesThisMonth,
     paidWaterThisMonth,
     paidElectricThisMonth,
+    paidMaintenanceThisMonth,
     paidDepositThisMonth,
 
     // Depósito de garantía en contrato
@@ -463,6 +520,7 @@ export function calculatePropertyStatus(
     pendingLateFeesBalance,
     pendingWaterBalance,
     pendingElectricBalance,
+    pendingMaintenanceBalance,
     pendingUtilitiesBalance,
   };
 }
@@ -473,14 +531,16 @@ export interface PaymentAllocationResult {
   appliedToDeposit: number;
   appliedToWater: number;
   appliedToElectric: number;
+  appliedToMaintenance: number;
   applicationFootnote: string;
 }
 
 /**
- * Evaluates payment allocation according to contract/legal priority:
- * 1. Satisfies pending late fees (moras) first.
- * 2. Satisfies pending/current rent second.
- * 3. Applies remainder to the selected utility concept (Water / Electricity).
+ * Evaluates payment allocation according to separate account rules:
+ * - Specific utility payments (Agua, Electricidad, Mantenimiento) are credited directly
+ *   to their own account and NEVER diverted to rent or rent late fees.
+ * - Renta payments are credited to rent late fees (if any) and rent principal.
+ * - Depósito payments are credited to Security Deposit.
  * Generates official footnote (nota al calce) detailing fund application.
  */
 export function evaluatePaymentAllocation(
@@ -505,6 +565,7 @@ export function evaluatePaymentAllocation(
   const pendingRent = currentStatus.pendingRentBalance;
   const pendingWater = currentStatus.pendingWaterBalance;
   const pendingElectric = currentStatus.pendingElectricBalance;
+  const pendingMaintenance = currentStatus.pendingMaintenanceBalance;
 
   let remaining = numericAmount;
   let appliedToLateFees = 0;
@@ -512,43 +573,61 @@ export function evaluatePaymentAllocation(
   let appliedToDeposit = 0;
   let appliedToWater = 0;
   let appliedToElectric = 0;
+  let appliedToMaintenance = 0;
 
   if (chosenConcept === 'deposito') {
-    // If designated explicitly for security deposit in contract, it covers deposit
     appliedToDeposit = numericAmount;
     remaining = 0;
-  } else {
-    // Rule: Evaluates if late fees or rent are owed; satisfies those first!
+  } else if (chosenConcept === 'agua') {
+    // Strict separate account: credited directly to water utility
+    appliedToWater = numericAmount;
+    remaining = 0;
+  } else if (chosenConcept === 'electricidad') {
+    // Strict separate account: credited directly to electricity utility
+    appliedToElectric = numericAmount;
+    remaining = 0;
+  } else if (chosenConcept === 'mantenimiento') {
+    // Strict separate account: credited directly to maintenance/resident fee
+    appliedToMaintenance = numericAmount;
+    remaining = 0;
+  } else if (chosenConcept === 'mora') {
+    // Dedicated late fee payment
+    appliedToLateFees = Math.min(numericAmount, pendingLateFees > 0 ? pendingLateFees : numericAmount);
+    remaining = Math.max(0, numericAmount - appliedToLateFees);
+    if (remaining > 0) {
+      appliedToRent = remaining;
+    }
+  } else if (chosenConcept === 'renta') {
+    // Rent priority: cover late fees on rent first if overdue, then rent
     if (pendingLateFees > 0) {
       appliedToLateFees = Math.min(remaining, pendingLateFees);
       remaining = Math.round((remaining - appliedToLateFees) * 100) / 100;
     }
-
+    appliedToRent = remaining;
+  } else {
+    // General payment: distribute in legal order
+    if (pendingLateFees > 0) {
+      appliedToLateFees = Math.min(remaining, pendingLateFees);
+      remaining = Math.round((remaining - appliedToLateFees) * 100) / 100;
+    }
     if (pendingRent > 0 && remaining > 0) {
       appliedToRent = Math.min(remaining, pendingRent);
       remaining = Math.round((remaining - appliedToRent) * 100) / 100;
     }
-
-    // Remainder allocation according to chosen concept
-    if (chosenConcept === 'agua') {
-      appliedToWater = remaining;
-    } else if (chosenConcept === 'electricidad') {
-      appliedToElectric = remaining;
-    } else if (chosenConcept === 'renta') {
+    if (pendingWater > 0 && remaining > 0) {
+      appliedToWater = Math.min(remaining, pendingWater);
+      remaining = Math.round((remaining - appliedToWater) * 100) / 100;
+    }
+    if (pendingElectric > 0 && remaining > 0) {
+      appliedToElectric = Math.min(remaining, pendingElectric);
+      remaining = Math.round((remaining - appliedToElectric) * 100) / 100;
+    }
+    if (pendingMaintenance > 0 && remaining > 0) {
+      appliedToMaintenance = Math.min(remaining, pendingMaintenance);
+      remaining = Math.round((remaining - appliedToMaintenance) * 100) / 100;
+    }
+    if (remaining > 0) {
       appliedToRent += remaining;
-    } else {
-      // General: distribute to water then electricity then rent
-      if (pendingWater > 0 && remaining > 0) {
-        appliedToWater = Math.min(remaining, pendingWater);
-        remaining = Math.round((remaining - appliedToWater) * 100) / 100;
-      }
-      if (pendingElectric > 0 && remaining > 0) {
-        appliedToElectric = Math.min(remaining, pendingElectric);
-        remaining = Math.round((remaining - appliedToElectric) * 100) / 100;
-      }
-      if (remaining > 0) {
-        appliedToRent += remaining;
-      }
     }
   }
 
@@ -559,25 +638,11 @@ export function evaluatePaymentAllocation(
   if (chosenConcept === 'deposito') {
     applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Depósito de Garantía estipulado en contrato.`;
   } else if (chosenConcept === 'agua') {
-    if (appliedToLateFees > 0 || appliedToRent > 0) {
-      const parts: string[] = [];
-      if (appliedToLateFees > 0) parts.push(`${formatCurrency(appliedToLateFees, currencySymbol)} a recargos por demora (mora)`);
-      if (appliedToRent > 0) parts.push(`${formatCurrency(appliedToRent, currencySymbol)} a balance pendiente de renta`);
-      const remainderFormatted = formatCurrency(appliedToWater, currencySymbol);
-      applicationFootnote = `⚠️ NOTA AL CALCE (Prelación de Fondos): De los ${totalFormatted} recibidos (declarados para Utilidad de Agua), se aplicaron prioritariamente ${parts.join(' y ')}. El remanente de ${remainderFormatted} fue acreditado a Utilidad de Agua.`;
-    } else {
-      applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Utilidad de Agua según concepto seleccionado.`;
-    }
+    applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Utilidad de Agua (cuenta separada de renta).`;
   } else if (chosenConcept === 'electricidad') {
-    if (appliedToLateFees > 0 || appliedToRent > 0) {
-      const parts: string[] = [];
-      if (appliedToLateFees > 0) parts.push(`${formatCurrency(appliedToLateFees, currencySymbol)} a recargos por demora (mora)`);
-      if (appliedToRent > 0) parts.push(`${formatCurrency(appliedToRent, currencySymbol)} a balance pendiente de renta`);
-      const remainderFormatted = formatCurrency(appliedToElectric, currencySymbol);
-      applicationFootnote = `⚠️ NOTA AL CALCE (Prelación de Fondos): De los ${totalFormatted} recibidos (declarados para Utilidad de Electricidad LUMA / AEE), se aplicaron prioritariamente ${parts.join(' y ')}. El remanente de ${remainderFormatted} fue acreditado a Utilidad de Electricidad.`;
-    } else {
-      applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Utilidad de Electricidad (LUMA / AEE) según concepto seleccionado.`;
-    }
+    applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Utilidad de Electricidad (LUMA / AEE) (cuenta separada de renta).`;
+  } else if (chosenConcept === 'mantenimiento') {
+    applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Cuota de Mantenimiento / Residentes (cuenta separada).`;
   } else if (chosenConcept === 'renta') {
     if (appliedToLateFees > 0) {
       applicationFootnote = `⚠️ NOTA AL CALCE (Prelación de Fondos): De los ${totalFormatted} recibidos, se aplicaron primero ${formatCurrency(appliedToLateFees, currencySymbol)} a cubrir cargos por demora pendientes, y el restante de ${formatCurrency(appliedToRent, currencySymbol)} se acreditó a la renta convenida.`;
@@ -585,7 +650,7 @@ export function evaluatePaymentAllocation(
       applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} acreditado íntegramente a Renta convenida en contrato.`;
     }
   } else {
-    applicationFootnote = `NOTA AL CALCE: Pago general de ${totalFormatted} distribuido prioritariamente a moras, renta y utilidades según saldos adeudados.`;
+    applicationFootnote = `NOTA AL CALCE: Pago de ${totalFormatted} aplicado según conceptos detallados.`;
   }
 
   return {
@@ -594,6 +659,7 @@ export function evaluatePaymentAllocation(
     appliedToDeposit,
     appliedToWater,
     appliedToElectric,
+    appliedToMaintenance,
     applicationFootnote,
   };
 }
@@ -605,9 +671,11 @@ export interface NextPeriodInvoiceInfo {
   rentAmount: number;
   waterAmount: number;
   electricAmount: number;
+  maintenanceAmount: number;
   totalUtilitiesAmount: number;
   lastMonthWaterAmount: number;
   lastMonthElectricAmount: number;
+  lastMonthMaintenanceAmount: number;
   lastMonthTotalUtilitiesAmount: number;
   utilitiesNote: string;
   accumulatedPreviousBalance: number;
@@ -617,6 +685,7 @@ export interface NextPeriodInvoiceInfo {
   graceDateStr: string;
   unpaidWaterCurrent: number;
   unpaidElectricCurrent: number;
+  unpaidMaintenanceCurrent: number;
   hasUnpaidUtilities: boolean;
 }
 
@@ -624,6 +693,8 @@ export interface NextPeriodInvoiceInfo {
  * Calculates financial amounts and due dates for upcoming advance invoice / next billing cycle.
  * NOTE: As utility charges vary each month according to real consumption, the previous month's
  * utilities cost is NOT added to the upcoming period's total. An informative note is provided instead.
+ * Advance payments for rent ONLY include payments with concept 'renta' or appliedToRent > 0;
+ * utility payments (Water, Electricity, Maintenance) are NEVER credited as advance rent!
  */
 export function calculateNextPeriodInvoiceInfo(
   property: Property,
@@ -632,11 +703,12 @@ export function calculateNextPeriodInvoiceInfo(
   currencySymbol: string = '$'
 ): NextPeriodInvoiceInfo {
   const currentStatus = calculatePropertyStatus(property, payments, referenceDate);
-  const currentYear = referenceDate.getFullYear();
-  const currentMonth = referenceDate.getMonth(); // 0-11
-  const todayDay = referenceDate.getDate();
+  const refDateLocal = parseLocalDate(referenceDate.toISOString());
+  const currentYear = refDateLocal.getFullYear();
+  const currentMonth = refDateLocal.getMonth(); // 0-11
+  const todayDay = refDateLocal.getDate();
 
-  // If today is BEFORE the agreed rent due day of the current month (e.g. today is Oct 4, due day is Oct 15):
+  // If today is BEFORE the agreed rent due day of the current month (e.g. today is Oct 14, due day is Oct 15):
   // The upcoming rent cycle to be notified in advance is the rent due on Oct 15!
   // If today is ON OR AFTER the due day (e.g. Oct 15+):
   // The current month is already active/current, so the upcoming advance notice is for NEXT month (Nov 15).
@@ -649,7 +721,7 @@ export function calculateNextPeriodInvoiceInfo(
     targetYear = currentYear;
     targetMonth = currentMonth;
   } else {
-    const nextDate = new Date(currentYear, currentMonth + 1, 1);
+    const nextDate = new Date(currentYear, currentMonth + 1, 1, 0, 0, 0, 0);
     targetYear = nextDate.getFullYear();
     targetMonth = nextDate.getMonth();
   }
@@ -657,14 +729,14 @@ export function calculateNextPeriodInvoiceInfo(
   const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
   const targetDueDay = Math.min(property.rentDueDay || 1, lastDayOfTargetMonth);
   const nextDueDate = `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(targetDueDay).padStart(2, '0')}`;
-  const targetDateObj = new Date(targetYear, targetMonth, targetDueDay);
+  const targetDateObj = new Date(targetYear, targetMonth, targetDueDay, 0, 0, 0, 0);
   const nextPeriodName = getCurrentPeriodName(targetDateObj);
 
   const graceDays = property.graceDays ?? 3;
-  const graceDate = new Date(targetYear, targetMonth, targetDueDay + graceDays);
+  const graceDate = new Date(targetYear, targetMonth, targetDueDay + graceDays, 0, 0, 0, 0);
   const graceDateStr = `${graceDate.getFullYear()}-${String(graceDate.getMonth() + 1).padStart(2, '0')}-${String(graceDate.getDate()).padStart(2, '0')}`;
 
-  const todayClean = new Date(currentYear, currentMonth, todayDay);
+  const todayClean = new Date(currentYear, currentMonth, todayDay, 0, 0, 0, 0);
   const daysUntilDue = Math.max(0, Math.ceil((targetDateObj.getTime() - todayClean.getTime()) / (1000 * 60 * 60 * 24)));
 
   // Carryover any remaining unpaid balance from prior/current months:
@@ -672,7 +744,8 @@ export function calculateNextPeriodInvoiceInfo(
   // If upcoming is next month's rent, previous balance is the full current pending balance (minus unpaid utilities of the current month which are segregated).
   const unpaidWaterCurrent = property.utilitiesWaterActive ? Math.max(0, currentStatus.pendingWaterBalance) : 0;
   const unpaidElectricCurrent = property.utilitiesElectricActive ? Math.max(0, currentStatus.pendingElectricBalance) : 0;
-  const unpaidUtilitiesTotal = unpaidWaterCurrent + unpaidElectricCurrent;
+  const unpaidMaintenanceCurrent = property.utilitiesMaintenanceActive ? Math.max(0, currentStatus.pendingMaintenanceBalance) : 0;
+  const unpaidUtilitiesTotal = unpaidWaterCurrent + unpaidElectricCurrent + unpaidMaintenanceCurrent;
   const hasUnpaidUtilities = unpaidUtilitiesTotal > 0;
 
   // Previous balance excluding the segregated current utilities to prevent double-counting
@@ -683,15 +756,21 @@ export function calculateNextPeriodInvoiceInfo(
   // Previous month utility reference costs (from property settings/last bill)
   const lastMonthWaterAmount = property.utilitiesWaterActive ? Math.max(0, Number(property.utilitiesWaterAmount) || 0) : 0;
   const lastMonthElectricAmount = property.utilitiesElectricActive ? Math.max(0, Number(property.utilitiesElectricAmount) || 0) : 0;
-  const lastMonthTotalUtilitiesAmount = lastMonthWaterAmount + lastMonthElectricAmount;
+  const lastMonthMaintenanceAmount = property.utilitiesMaintenanceActive ? Math.max(0, Number(property.utilitiesMaintenanceAmount) || 0) : 0;
+  const lastMonthTotalUtilitiesAmount = lastMonthWaterAmount + lastMonthElectricAmount + lastMonthMaintenanceAmount;
 
-  // Check if tenant made any advance payments for the target period
+  // Check if tenant made any advance payments SPECIFICALLY FOR RENT for the target period.
+  // Utility payments (water, electric, maintenance) are NEVER credited as advance rent!
   const propPayments = payments.filter((p) => p.propertyId === property.id);
   const advancePayments = propPayments
-    .filter((p) => p.period.toLowerCase().trim() === nextPeriodName.toLowerCase().trim())
-    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    .filter((p) => {
+      const matchPeriod = p.period && p.period.toLowerCase().trim() === nextPeriodName.toLowerCase().trim();
+      const rentPortion = Number(p.appliedToRent) || (p.concept === 'renta' ? Number(p.amount) : 0);
+      return matchPeriod && rentPortion > 0;
+    })
+    .reduce((sum, p) => sum + (Number(p.appliedToRent) || (p.concept === 'renta' ? Number(p.amount) : 0)), 0);
 
-  // TOTAL PROYECTADO: Renta + Saldos pendientes acumulados + Utilidades no pagadas del mes corriente - Abonos anticipados
+  // TOTAL PROYECTADO: Renta + Saldos pendientes acumulados + Utilidades no pagadas del mes corriente - Abonos anticipados DE RENTA
   const totalDueNextMonth = Math.max(
     0,
     property.rentAmount + accumulatedPreviousBalance + unpaidUtilitiesTotal - advancePayments
@@ -701,18 +780,22 @@ export function calculateNextPeriodInvoiceInfo(
   if (hasUnpaidUtilities) {
     const unpaidParts: string[] = [];
     if (unpaidWaterCurrent > 0) unpaidParts.push(`Agua: ${formatCurrency(unpaidWaterCurrent, currencySymbol)}`);
-    if (unpaidElectricCurrent > 0) unpaidParts.push(`LUMA / AEE: ${formatCurrency(unpaidElectricCurrent, currencySymbol)}`);
+    if (unpaidElectricCurrent > 0) unpaidParts.push(`Electricidad: ${formatCurrency(unpaidElectricCurrent, currencySymbol)}`);
+    if (unpaidMaintenanceCurrent > 0) unpaidParts.push(`Cuota: ${formatCurrency(unpaidMaintenanceCurrent, currencySymbol)}`);
     utilitiesNote = `Utilidades pendientes del mes corriente (${unpaidParts.join(', ')}): Se incluyen en el desglose y balance a pagar al no registrarse su liquidación.`;
-  } else if (property.utilitiesWaterActive || property.utilitiesElectricActive) {
+  } else if (property.utilitiesWaterActive || property.utilitiesElectricActive || property.utilitiesMaintenanceActive) {
     const parts: string[] = [];
     if (property.utilitiesWaterActive && lastMonthWaterAmount > 0) {
       parts.push(`Agua: ${formatCurrency(lastMonthWaterAmount, currencySymbol)}`);
     }
     if (property.utilitiesElectricActive && lastMonthElectricAmount > 0) {
-      parts.push(`LUMA / AEE: ${formatCurrency(lastMonthElectricAmount, currencySymbol)}`);
+      parts.push(`Electricidad: ${formatCurrency(lastMonthElectricAmount, currencySymbol)}`);
+    }
+    if (property.utilitiesMaintenanceActive && lastMonthMaintenanceAmount > 0) {
+      parts.push(`Cuota: ${formatCurrency(lastMonthMaintenanceAmount, currencySymbol)}`);
     }
     const details = parts.length > 0 ? ` (${parts.join(', ')})` : '';
-    utilitiesNote = `Nota informativa de utilidades: En la última factura recibida el costo de utilidades fue de ${formatCurrency(lastMonthTotalUtilitiesAmount, currencySymbol)}${details}. El costo para este nuevo ciclo variará según el consumo real; cuando los proveedores emitan la próxima factura se le indicará y agregará la cantidad correspondiente a pagar por dicho concepto.`;
+    utilitiesNote = `Nota informativa de utilidades: En la última factura el costo de utilidades fue de ${formatCurrency(lastMonthTotalUtilitiesAmount, currencySymbol)}${details}. El costo para este nuevo ciclo variará según el consumo real; cuando los proveedores emitan la próxima factura se le indicará y agregará la cantidad correspondiente a pagar por dicho concepto.`;
   }
 
   return {
@@ -720,11 +803,13 @@ export function calculateNextPeriodInvoiceInfo(
     nextDueDate,
     nextDueDay: targetDueDay,
     rentAmount: property.rentAmount,
-    waterAmount: unpaidWaterCurrent, // Added when unpaid in current month
-    electricAmount: unpaidElectricCurrent, // Added when unpaid in current month
-    totalUtilitiesAmount: unpaidUtilitiesTotal, // Added when unpaid in current month
+    waterAmount: unpaidWaterCurrent,
+    electricAmount: unpaidElectricCurrent,
+    maintenanceAmount: unpaidMaintenanceCurrent,
+    totalUtilitiesAmount: unpaidUtilitiesTotal,
     lastMonthWaterAmount,
     lastMonthElectricAmount,
+    lastMonthMaintenanceAmount,
     lastMonthTotalUtilitiesAmount,
     utilitiesNote,
     accumulatedPreviousBalance,
@@ -734,6 +819,7 @@ export function calculateNextPeriodInvoiceInfo(
     graceDateStr,
     unpaidWaterCurrent,
     unpaidElectricCurrent,
+    unpaidMaintenanceCurrent,
     hasUnpaidUtilities,
   };
 }
