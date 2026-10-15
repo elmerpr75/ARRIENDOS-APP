@@ -141,6 +141,7 @@ export interface LandlordProfile {
   themeMode?: ThemeMode; // 'light' | 'dark' | 'system'
   googleDriveFolderId?: string; // ID or link of Google Drive Folder for backups
   googleDriveAccountEmail?: string; // Connected Google Account email
+  securityPin?: string; // PIN opcional para bloqueo/desbloqueo de sesión local
   notificationSettings?: NotificationSettings;
   administrators?: Administrator[]; // Up to 7 administrators/companies
 }

@@ -9,6 +9,7 @@ import {
   saveLandlordProfile,
   loadAdministrators,
   saveAdministrators,
+  exportAppData,
 } from './utils/storage';
 import { calculatePropertyStatus } from './utils/calculations';
 import { checkAndTriggerAutomatedReminders } from './utils/notifications';
@@ -29,6 +30,8 @@ import { PaymentModal } from './components/PaymentModal';
 import { InvoiceModal } from './components/InvoiceModal';
 import { ProfileSettingsModal } from './components/ProfileSettingsModal';
 import { GoogleDriveBackupModal } from './components/GoogleDriveBackupModal';
+import { LogoutConfirmModal } from './components/LogoutConfirmModal';
+import { SessionLockScreen } from './components/SessionLockScreen';
 import { InitialLanguageModal, OnboardingRegistrationData } from './components/InitialLanguageModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { SubscriptionModal } from './components/SubscriptionModal';
@@ -40,7 +43,9 @@ import {
   syncSubscriptionWithServer,
   resetTrialStartDate,
 } from './utils/subscription';
-import { initAuth } from './utils/firebaseAuth';
+import { initAuth, logout, getAccessToken, googleSignIn } from './utils/firebaseAuth';
+import { uploadBackupToDrive, extractFolderId } from './utils/googleDrive';
+import { isAppSessionLocked, lockAppSession, unlockAppSession } from './utils/sessionLock';
 import { ThemeMode, getSavedThemeMode, applyThemeMode, subscribeToSystemThemeChanges } from './utils/theme';
 import { ThemeSelector } from './components/ThemeSelector';
 import {
@@ -61,6 +66,7 @@ import {
   AlertCircle,
   Lock,
   Database,
+  LogOut,
 } from 'lucide-react';
 
 export default function App() {
@@ -112,6 +118,8 @@ export default function App() {
   const [isGoogleDriveModalOpen, setIsGoogleDriveModalOpen] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => isAppSessionLocked());
   const [authUserEmail, setAuthUserEmail] = useState<string | null>(null);
 
   // Listen to Google/Firebase auth for user email (silent VIP recognition)
@@ -268,6 +276,66 @@ export default function App() {
     setAdministrators([...loadAdministrators()]);
   };
 
+  // Sign out, backup, and lock session handlers
+  const handleConfirmLogout = async (backupChoice: 'gdrive' | 'local' | 'none') => {
+    if (backupChoice === 'local') {
+      const dataStr = exportAppData();
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().split('T')[0];
+      link.href = url;
+      link.download = `arriendos-respaldo-${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } else if (backupChoice === 'gdrive') {
+      let token = await getAccessToken();
+      if (!token) {
+        const signResult = await googleSignIn();
+        if (signResult?.accessToken) {
+          token = signResult.accessToken;
+          setAuthUserEmail(signResult.user.email);
+        }
+      }
+      if (token) {
+        const backupContent = exportAppData();
+        const cleanFolder = extractFolderId(profile.googleDriveFolderId || '');
+        await uploadBackupToDrive(token, backupContent, cleanFolder);
+      }
+    }
+
+    try {
+      await logout();
+    } catch (e) {
+      console.warn('Logout notice:', e);
+    }
+    setAuthUserEmail(null);
+    lockAppSession();
+    setIsSessionLocked(true);
+    setIsLogoutModalOpen(false);
+  };
+
+  const handleUnlockSession = (authenticatedEmail?: string) => {
+    unlockAppSession();
+    setIsSessionLocked(false);
+    if (authenticatedEmail) {
+      setAuthUserEmail(authenticatedEmail);
+      const checkEmails = [
+        authenticatedEmail,
+        profile.email,
+        profile.googleDriveAccountEmail,
+        ...administrators.map((a) => a.email),
+      ].filter((e): e is string => Boolean(e && typeof e === 'string' && e.trim().length > 0));
+      setSubscriptionState(getSubscriptionState(checkEmails));
+      syncSubscriptionWithServer(checkEmails).then((remoteState) => {
+        setSubscriptionState(remoteState);
+      });
+    }
+    reloadData();
+  };
+
   // Property handlers
   const handleSaveProperty = (savedProp: Property) => {
     let updated: Property[];
@@ -393,6 +461,24 @@ export default function App() {
   const contractAlerts = allStatuses.filter((s) => s.contractDaysLeft <= 60).length;
   const overdueAlerts = allStatuses.filter((s) => s.isOverdue).length;
   const totalAlerts = contractAlerts + overdueAlerts;
+
+  // If the session has been closed/locked, display the secure unlock/login screen
+  if (isSessionLocked) {
+    return (
+      <SessionLockScreen
+        profile={profile}
+        administrators={administrators}
+        currentLang={currentLang}
+        onUnlockSuccess={handleUnlockSession}
+        onResetForNewUser={() => {
+          unlockAppSession();
+          setIsSessionLocked(false);
+          setShowInitialOnboarding(true);
+        }}
+        onDataRestored={reloadData}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans pb-16 md:pb-6">
@@ -529,11 +615,22 @@ export default function App() {
             {/* Company & Timbre Settings */}
             <button
               onClick={() => setIsProfileModalOpen(true)}
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1"
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1 cursor-pointer"
               title="Configuración de logotipo y datos fiscales"
             >
               <Settings className="w-4 h-4" />
               <span className="hidden md:inline">{t.logoTimbre}</span>
+            </button>
+
+            {/* Logout / Exit App & Lock Session */}
+            <button
+              type="button"
+              onClick={() => setIsLogoutModalOpen(true)}
+              className="p-2 bg-slate-800 hover:bg-rose-950/60 text-slate-300 hover:text-rose-300 hover:border-rose-500/50 rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              title={currentLang === 'en' ? 'Sign out and protect access' : 'Cerrar sesión y proteger acceso'}
+            >
+              <LogOut className="w-4 h-4 text-rose-400" />
+              <span className="hidden md:inline">{currentLang === 'en' ? 'Exit' : 'Salir'}</span>
             </button>
           </div>
         </div>
@@ -746,6 +843,15 @@ export default function App() {
           <Settings className="w-5 h-5 mb-0.5" />
           <span>{currentLang === 'es' ? 'Ajustes' : 'Config'}</span>
         </button>
+
+        <button
+          onClick={() => setIsLogoutModalOpen(true)}
+          className="flex flex-col items-center py-1 px-2 rounded-lg transition hover:text-rose-300 text-rose-400"
+          title={currentLang === 'en' ? 'Sign out' : 'Cerrar sesión'}
+        >
+          <LogOut className="w-5 h-5 mb-0.5" />
+          <span>{currentLang === 'en' ? 'Exit' : 'Salir'}</span>
+        </button>
       </nav>
 
       {/* Initial Bilingual Onboarding Language Selection Modal */}
@@ -859,6 +965,17 @@ export default function App() {
         userEmails={subscriptionEmails}
         currentLanguage={currentLang}
         onConnectionSuccess={handleSubscriptionUpdated}
+      />
+
+      <LogoutConfirmModal
+        isOpen={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
+        onConfirmLogout={handleConfirmLogout}
+        isGoogleDriveConnected={Boolean(authUserEmail || profile.googleDriveAccountEmail)}
+        connectedGoogleEmail={authUserEmail || profile.googleDriveAccountEmail}
+        userEmail={profile.email}
+        folderInput={profile.googleDriveFolderId}
+        currentLang={currentLang}
       />
     </div>
   );

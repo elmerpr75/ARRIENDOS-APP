@@ -22,6 +22,8 @@ import {
   Database,
   Server,
   Key,
+  Lock,
+  KeyRound,
 } from 'lucide-react';
 import { exportAppData, importAppData, loadAdministrators, saveAdministrators } from '../utils/storage';
 import {
@@ -89,6 +91,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
   // Global settings state
   const [googleDriveFolderId, setGoogleDriveFolderId] = useState('');
   const [googleDriveAccountEmail, setGoogleDriveAccountEmail] = useState('');
+  const [securityPin, setSecurityPin] = useState(profile.securityPin || '');
 
   // Notification Settings State
   const [notifEnabled, setNotifEnabled] = useState(
@@ -125,6 +128,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       setActiveAdminId(loadedAdmins[0]?.id || 'admin-1');
       setGoogleDriveFolderId(profile.googleDriveFolderId || '');
       setGoogleDriveAccountEmail(profile.googleDriveAccountEmail || '');
+      setSecurityPin(profile.securityPin || '');
       setSelectedLang(currentLanguage);
       setSelectedTheme(currentTheme || profile.themeMode || getSavedThemeMode());
       setPermissionStatus(getNotificationPermissionStatus());
@@ -379,6 +383,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       themeMode: selectedTheme,
       googleDriveFolderId: googleDriveFolderId.trim() || undefined,
       googleDriveAccountEmail: googleDriveAccountEmail.trim() || undefined,
+      securityPin: securityPin.trim() || undefined,
       notificationSettings,
       administrators,
     };
@@ -798,6 +803,47 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
               placeholder="https://drive.google.com/drive/folders/... o dejar vacío para Mi Unidad"
               className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
             />
+          </div>
+
+          {/* Section: Security PIN / Device Lock */}
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-sky-500" />
+                Seguridad & Bloqueo en Equipos Compartidos
+              </label>
+              {securityPin && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                  PIN Activo
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Si compartes esta computadora o celular con otras personas, define un PIN o clave (4 a 8 dígitos/caracteres). Al cerrar sesión, se solicitará este PIN o tu cuenta de Google para volver a acceder a tus propiedades.
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <div className="relative flex-1">
+                <input
+                  type="password"
+                  value={securityPin}
+                  onChange={(e) => setSecurityPin(e.target.value)}
+                  maxLength={8}
+                  placeholder="Dejar en blanco si no deseas requerir PIN"
+                  className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
+                />
+                <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+              {securityPin && (
+                <button
+                  type="button"
+                  onClick={() => setSecurityPin('')}
+                  className="px-2.5 py-2 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-900 transition"
+                  title="Quitar PIN"
+                >
+                  Quitar PIN
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Section: Language */}
