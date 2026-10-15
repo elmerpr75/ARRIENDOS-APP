@@ -9,6 +9,7 @@ import {
 } from '../utils/calculations';
 import { getAdministratorForProperty } from '../utils/storage';
 import { downloadElementAsPdf, printElementSafely } from '../utils/pdfGenerator';
+import { isLifetimeVip } from '../utils/subscription';
 import {
   FileSpreadsheet,
   Printer,
@@ -34,6 +35,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Receipt,
+  CalendarRange,
 } from 'lucide-react';
 
 interface AccountingAuditViewProps {
@@ -43,6 +45,7 @@ interface AccountingAuditViewProps {
   profile?: LandlordProfile;
   onOpenInvoice?: (status: any, mode?: 'current' | 'next_month') => void;
   onRegisterPayment?: (propertyId: string, defaultPayer?: string, defaultAmount?: number) => void;
+  canExportCode?: boolean;
 }
 
 export interface HistoricalLedgerEntry {
@@ -90,6 +93,107 @@ export interface PropertyHistoricalData {
   grandFinalBalance: number;
 }
 
+/**
+ * Filters a ledger by an optional start/end date range.
+ * If a startDateStr is present, prior obligations and payments are consolidated
+ * into an initial opening balance entry ("Saldo Anterior al Período"), and subsequent
+ * entries are re-sequenced with running balances starting from that opening balance.
+ * If no startDateStr is present (TODO mode), all entries from the beginning of time are returned.
+ */
+function applyHistoryDateFilter(
+  entries: HistoricalLedgerEntry[],
+  conceptName: string,
+  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento',
+  startDateStr?: string,
+  endDateStr?: string
+): {
+  filteredEntries: HistoricalLedgerEntry[];
+  totalObligations: number;
+  totalPayments: number;
+  finalBalance: number;
+} {
+  // Sort all entries chronologically: obligations first if same date
+  entries.sort((a, b) => {
+    const cmp = parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime();
+    if (cmp !== 0) return cmp;
+    if (!a.isPayment && b.isPayment) return -1;
+    if (a.isPayment && !b.isPayment) return 1;
+    return 0;
+  });
+
+  // Calculate full progressive running balance across all time
+  let running = 0;
+  for (const entry of entries) {
+    if (entry.obligationAmount !== null) running += entry.obligationAmount;
+    if (entry.paymentAmount !== null) running -= entry.paymentAmount;
+    entry.runningBalance = Math.round(running * 100) / 100;
+  }
+
+  const startTime = startDateStr && startDateStr.trim() !== '' ? parseLocalDate(startDateStr).getTime() : null;
+  const endTime = endDateStr && endDateStr.trim() !== '' ? parseLocalDate(endDateStr).getTime() + (24 * 60 * 60 * 1000 - 1) : null;
+
+  if (!startTime && !endTime) {
+    const totalObligations = entries.reduce((s, e) => s + (e.obligationAmount || 0), 0);
+    const totalPayments = entries.reduce((s, e) => s + (e.paymentAmount || 0), 0);
+    const finalBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : 0;
+    return { filteredEntries: entries, totalObligations, totalPayments, finalBalance };
+  }
+
+  let priorObligations = 0;
+  let priorPayments = 0;
+  const filtered: HistoricalLedgerEntry[] = [];
+
+  for (const entry of entries) {
+    const entryTime = parseLocalDate(entry.date).getTime();
+    if (startTime !== null && entryTime < startTime) {
+      if (entry.obligationAmount !== null) priorObligations += entry.obligationAmount;
+      if (entry.paymentAmount !== null) priorPayments += entry.paymentAmount;
+    } else if (endTime === null || entryTime <= endTime) {
+      filtered.push(entry);
+    }
+  }
+
+  const priorBalance = Math.round((priorObligations - priorPayments) * 100) / 100;
+
+  // If there were prior transactions or a non-zero balance before startDate, add an opening carryover row
+  if (startTime !== null && (priorObligations > 0 || priorPayments > 0 || priorBalance !== 0)) {
+    const openingEntry: HistoricalLedgerEntry = {
+      id: `opening-${conceptType}-${startDateStr}`,
+      date: startDateStr!,
+      conceptType,
+      conceptName,
+      transactionTitle: `Saldo Anterior al Período (${formatDate(startDateStr)})`,
+      obligationAmount: priorBalance > 0 ? priorBalance : null,
+      contractualDueDate: startDateStr!,
+      paymentAmount: priorBalance < 0 ? Math.abs(priorBalance) : null,
+      paymentDate: startDateStr!,
+      runningBalance: priorBalance,
+      notes: `Balance acumulado arrastrado previo a la fecha inicial (${formatDate(startDateStr)}).`,
+      isPayment: false,
+      isLateFee: false,
+    };
+    filtered.unshift(openingEntry);
+  }
+
+  // Recalculate progressive running balances for the displayed window
+  let windowRunning = 0;
+  for (const entry of filtered) {
+    if (entry.id.startsWith('opening-')) {
+      windowRunning = entry.runningBalance;
+    } else {
+      if (entry.obligationAmount !== null) windowRunning += entry.obligationAmount;
+      if (entry.paymentAmount !== null) windowRunning -= entry.paymentAmount;
+      entry.runningBalance = Math.round(windowRunning * 100) / 100;
+    }
+  }
+
+  const totalObligations = filtered.reduce((s, e) => s + (e.obligationAmount || 0), 0);
+  const totalPayments = filtered.reduce((s, e) => s + (e.paymentAmount || 0), 0);
+  const finalBalance = filtered.length > 0 ? filtered[filtered.length - 1].runningBalance : priorBalance;
+
+  return { filteredEntries: filtered, totalObligations, totalPayments, finalBalance };
+}
+
 export function generatePropertyHistoricalData(
   property: Property,
   propPayments: Payment[],
@@ -98,27 +202,58 @@ export function generatePropertyHistoricalData(
   includeWater: boolean,
   includeElectric: boolean,
   includeMaintenance: boolean,
-  companyAdmin: Administrator
+  companyAdmin: Administrator,
+  historyStartDate?: string,
+  historyEndDate?: string
 ): PropertyHistoricalData {
-  const refTime = referenceDate.getTime();
-  const refYear = referenceDate.getFullYear();
-  const refMonth = referenceDate.getMonth();
+  const paymentTimes = propPayments
+    .map((p) => parseLocalDate(p.date).getTime())
+    .filter((t) => !isNaN(t));
+  const earliestPaymentTime = paymentTimes.length > 0 ? Math.min(...paymentTimes) : null;
+  const latestPaymentTime = paymentTimes.length > 0 ? Math.max(...paymentTimes) : null;
 
+  let targetEnd: Date;
+  if (historyEndDate && historyEndDate.trim() !== '') {
+    targetEnd = parseLocalDate(historyEndDate);
+  } else {
+    // If no end date filter (TODO / All time), extend at least through referenceDate AND latest payment
+    const maxTime = Math.max(
+      referenceDate.getTime(),
+      latestPaymentTime ?? referenceDate.getTime()
+    );
+    targetEnd = new Date(maxTime);
+  }
+
+  const refTime = targetEnd.getTime();
+  const refYear = targetEnd.getFullYear();
+  const refMonth = targetEnd.getMonth();
+
+  // Find true earliest date among contract start date and all recorded payments
   const contractStart = parseLocalDate(property.contractStartDate);
-  let startYear = !isNaN(contractStart.getTime()) ? contractStart.getFullYear() : refYear;
-  let startMonth = !isNaN(contractStart.getTime()) ? contractStart.getMonth() : Math.max(0, refMonth - 2);
+  const hasContractStart = !isNaN(contractStart.getTime());
+
+  let earliestTime: number;
+  if (hasContractStart && earliestPaymentTime !== null) {
+    earliestTime = Math.min(contractStart.getTime(), earliestPaymentTime);
+  } else if (hasContractStart) {
+    earliestTime = contractStart.getTime();
+  } else if (earliestPaymentTime !== null) {
+    earliestTime = earliestPaymentTime;
+  } else {
+    // Default fallback: 1 year prior to refDate
+    earliestTime = new Date(refYear - 1, refMonth, 1).getTime();
+  }
+
+  const earliestDate = new Date(earliestTime);
+  let startYear = earliestDate.getFullYear();
+  let startMonth = earliestDate.getMonth();
 
   if (startYear > refYear || (startYear === refYear && startMonth > refMonth)) {
     startYear = refYear;
     startMonth = refMonth;
   }
 
-  let totalMonths = (refYear - startYear) * 12 + (refMonth - startMonth);
-  if (totalMonths > 24) {
-    totalMonths = 24;
-    startYear = refYear - 2;
-    startMonth = refMonth;
-  }
+  const totalMonths = (refYear - startYear) * 12 + (refMonth - startMonth);
   const totalCycles = Math.max(1, totalMonths + 1);
 
   // Track matched payments to avoid double-counting or omitting any
@@ -256,26 +391,58 @@ export function generatePropertyHistoricalData(
       }
     }
 
-    // Capture any remaining unmatched rent payments
+    // Capture any remaining unmatched payments under Rent & Moras
     for (const pay of propPayments) {
       if (matchedPaymentIds.has(pay.id)) continue;
       const rAmt = Number(pay.appliedToRent) || (pay.concept === 'renta' ? Number(pay.amount) : 0);
-      if (rAmt > 0) {
+      const lateAmt = Number(pay.appliedToLateFees) || (pay.concept === 'mora' ? Number(pay.amount) : 0);
+
+      // Also catch any generic/unassigned payment if no utilities took it
+      const isGeneric = (!pay.concept || pay.concept === 'general') &&
+        !pay.appliedToRent && !pay.appliedToLateFees && !pay.appliedToWater && !pay.appliedToElectric && !pay.appliedToMaintenance;
+      const effectiveRentAmt = rAmt > 0 ? rAmt : (isGeneric ? Number(pay.amount) : 0);
+
+      if (effectiveRentAmt > 0) {
         matchedPaymentIds.add(pay.id);
         rentEntries.push({
           id: `rent-extra-${pay.id}`,
           date: pay.date,
           conceptType: 'renta',
           conceptName: 'Renta Contractual',
-          transactionTitle: `Abono de Renta Registrado (${pay.period || 'General'})`,
+          transactionTitle: `Abono de Renta Registrado (${pay.period || 'Histórico General'})`,
           obligationAmount: null,
           contractualDueDate: null,
-          paymentAmount: rAmt,
+          paymentAmount: effectiveRentAmt,
           paymentDate: pay.date,
           runningBalance: 0,
-          notes: `Abono recibido de ${pay.payerName || property.tenant1.name}. ${pay.applicationFootnote || 'Acreditado a cuenta de renta.'}`,
+          notes: `Abono recibido de ${pay.payerName || property.tenant1.name} vía ${(pay.paymentMethod || 'transferencia').toUpperCase()}${pay.reference ? ` (Ref: ${pay.reference})` : ''}. ${pay.applicationFootnote || 'Acreditado a cuenta de renta.'}`,
           isPayment: true,
           isLateFee: false,
+          payerName: pay.payerName,
+          method: pay.paymentMethod,
+          reference: pay.reference,
+        });
+      }
+
+      if (lateAmt > 0) {
+        matchedPaymentIds.add(pay.id);
+        rentEntries.push({
+          id: `mora-extra-${pay.id}`,
+          date: pay.date,
+          conceptType: 'mora',
+          conceptName: 'Recargos por Demora',
+          transactionTitle: `Pago Registrado: Recargos por Demora (${pay.period || 'Histórico General'})`,
+          obligationAmount: null,
+          contractualDueDate: null,
+          paymentAmount: lateAmt,
+          paymentDate: pay.date,
+          runningBalance: 0,
+          notes: `Abono de ${formatCurrency(lateAmt, companyAdmin.currencySymbol)} acreditado a liquidar penalidades por demora.`,
+          isPayment: true,
+          isLateFee: true,
+          payerName: pay.payerName,
+          method: pay.paymentMethod,
+          reference: pay.reference,
         });
       }
     }
@@ -617,46 +784,76 @@ export function generatePropertyHistoricalData(
     }
   }
 
-  const rentTotalObligations = rentEntries.reduce((s, e) => s + (e.obligationAmount || 0), 0);
-  const rentTotalPayments = rentEntries.reduce((s, e) => s + (e.paymentAmount || 0), 0);
-  const rentFinalBalance = Math.round(rentRunning * 100) / 100;
+  const rentResult = applyHistoryDateFilter(
+    rentEntries,
+    'Renta Contractual',
+    'renta',
+    historyStartDate,
+    historyEndDate
+  );
 
-  const waterTotalObligations = waterEntries.reduce((s, e) => s + (e.obligationAmount || 0), 0);
-  const waterTotalPayments = waterEntries.reduce((s, e) => s + (e.paymentAmount || 0), 0);
-  const waterFinalBalance = Math.round(waterRunning * 100) / 100;
+  const waterResult = applyHistoryDateFilter(
+    waterEntries,
+    'Utilidad de Agua Potable',
+    'agua',
+    historyStartDate,
+    historyEndDate
+  );
 
-  const electricTotalObligations = electricEntries.reduce((s, e) => s + (e.obligationAmount || 0), 0);
-  const electricTotalPayments = electricEntries.reduce((s, e) => s + (e.paymentAmount || 0), 0);
-  const electricFinalBalance = Math.round(electricRunning * 100) / 100;
+  const electricResult = applyHistoryDateFilter(
+    electricEntries,
+    'Utilidad de Electricidad',
+    'electricidad',
+    historyStartDate,
+    historyEndDate
+  );
 
-  const maintenanceTotalObligations = maintenanceEntries.reduce((s, e) => s + (e.obligationAmount || 0), 0);
-  const maintenanceTotalPayments = maintenanceEntries.reduce((s, e) => s + (e.paymentAmount || 0), 0);
-  const maintenanceFinalBalance = Math.round(maintRunning * 100) / 100;
+  const maintenanceResult = applyHistoryDateFilter(
+    maintenanceEntries,
+    'Mantenimiento / Cuota',
+    'mantenimiento',
+    historyStartDate,
+    historyEndDate
+  );
 
-  const grandTotalObligations = rentTotalObligations + waterTotalObligations + electricTotalObligations + maintenanceTotalObligations;
-  const grandTotalPayments = rentTotalPayments + waterTotalPayments + electricTotalPayments + maintenanceTotalPayments;
-  const grandFinalBalance = rentFinalBalance + waterFinalBalance + electricFinalBalance + maintenanceFinalBalance;
+  const grandTotalObligations =
+    rentResult.totalObligations +
+    waterResult.totalObligations +
+    electricResult.totalObligations +
+    maintenanceResult.totalObligations;
+
+  const grandTotalPayments =
+    rentResult.totalPayments +
+    waterResult.totalPayments +
+    electricResult.totalPayments +
+    maintenanceResult.totalPayments;
+
+  const grandFinalBalance =
+    rentResult.finalBalance +
+    waterResult.finalBalance +
+    electricResult.finalBalance +
+    maintenanceResult.finalBalance;
 
   return {
-    rentEntries,
-    rentTotalObligations,
-    rentTotalPayments,
-    rentFinalBalance,
+    rentEntries: rentResult.filteredEntries,
+    rentTotalObligations: rentResult.totalObligations,
+    rentTotalPayments: rentResult.totalPayments,
+    rentFinalBalance: rentResult.finalBalance,
 
-    waterEntries,
-    waterTotalObligations,
-    waterTotalPayments,
-    waterFinalBalance,
+    waterEntries: waterResult.filteredEntries,
+    waterTotalObligations: waterResult.totalObligations,
+    waterTotalPayments: waterResult.totalPayments,
+    waterFinalBalance: waterResult.finalBalance,
 
-    electricEntries,
-    electricTotalObligations,
-    electricTotalPayments,
-    electricFinalBalance,
+    electricEntries: electricResult.filteredEntries,
+    electricTotalObligations: electricResult.totalObligations,
+    electricTotalPayments: electricResult.totalPayments,
+    electricFinalBalance: electricResult.finalBalance,
 
-    maintenanceEntries,
-    maintenanceTotalObligations,
-    maintenanceTotalPayments,
-    maintenanceFinalBalance,
+    maintenanceEntries: maintenanceResult.filteredEntries,
+    maintenanceTotalObligations: maintenanceResult.totalObligations,
+    maintenanceTotalPayments: maintenanceResult.totalPayments,
+    maintenanceFinalBalance: maintenanceResult.finalBalance,
 
     grandTotalObligations,
     grandTotalPayments,
@@ -671,7 +868,25 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
   profile,
   onOpenInvoice,
   onRegisterPayment,
+  canExportCode = false,
 }) => {
+  // Permiso exclusivo de desarrollador / cuentas VIP autorizadas para ver y descargar el código fuente (.ZIP)
+  const isDevStudio = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('googleusercontent.com')
+  );
+
+  const isDeveloperUser = Boolean(
+    canExportCode ||
+    isLifetimeVip([
+      profile?.email,
+      profile?.googleDriveAccountEmail,
+      ...(administrators || []).map((a) => a.email),
+    ]) ||
+    isDevStudio
+  );
+
   // Pre-report filters & selection
   const [selectedAdminId, setSelectedAdminId] = useState<string>('all');
   const [computationDate, setComputationDate] = useState<string>(
@@ -688,6 +903,49 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
 
   // Historial Transaccional (Estado de Cuenta con Balances Progresivos)
   const [showHistory, setShowHistory] = useState<boolean>(false);
+
+  // Filtro de Rango de Fechas para HISTORIAL (Todo, 6 meses, 12 meses, 24 meses o fechas libres)
+  const [historyPreset, setHistoryPreset] = useState<'all' | '6m' | '12m' | '24m' | 'custom'>('all');
+  const [historyStartDate, setHistoryStartDate] = useState<string>('');
+  const [historyEndDate, setHistoryEndDate] = useState<string>('');
+
+  const handleSetPreset = (preset: 'all' | '6m' | '12m' | '24m') => {
+    setHistoryPreset(preset);
+    const endStr = computationDate || new Date().toISOString().split('T')[0];
+
+    if (preset === 'all') {
+      setHistoryStartDate('');
+      setHistoryEndDate('');
+    } else if (preset === '6m') {
+      const d = parseLocalDate(endStr);
+      d.setMonth(d.getMonth() - 6);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      setHistoryStartDate(startStr);
+      setHistoryEndDate(endStr);
+    } else if (preset === '12m') {
+      const d = parseLocalDate(endStr);
+      d.setFullYear(d.getFullYear() - 1);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      setHistoryStartDate(startStr);
+      setHistoryEndDate(endStr);
+    } else if (preset === '24m') {
+      const d = parseLocalDate(endStr);
+      d.setFullYear(d.getFullYear() - 2);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      setHistoryStartDate(startStr);
+      setHistoryEndDate(endStr);
+    }
+  };
+
+  const handleStartDateChange = (val: string) => {
+    setHistoryStartDate(val);
+    setHistoryPreset('custom');
+  };
+
+  const handleEndDateChange = (val: string) => {
+    setHistoryEndDate(val);
+    setHistoryPreset('custom');
+  };
 
   // Property selection (by ID)
   const [selectedPropertyIds, setSelectedPropertyIds] = useState<string[]>(() =>
@@ -810,8 +1068,14 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           includeWater,
           includeElectric,
           includeMaintenance,
-          admin
+          admin,
+          showHistory ? (historyStartDate.trim() ? historyStartDate : undefined) : undefined,
+          showHistory ? (historyEndDate.trim() ? historyEndDate : undefined) : undefined
         );
+
+        const effectivePropertyPending = showHistory
+          ? historyData.grandFinalBalance
+          : totalPropertyPending;
 
         return {
           property,
@@ -830,7 +1094,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           maintenancePayDates: maintenancePayDates.length > 0 ? maintenancePayDates.join(', ') : '-',
           totalAccumulatedRentAndFees,
           totalAccumulatedUtilities,
-          totalPropertyPending,
+          totalPropertyPending: effectivePropertyPending,
           historyData,
         };
       })
@@ -851,6 +1115,9 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
     includeWater,
     includeElectric,
     includeMaintenance,
+    historyStartDate,
+    historyEndDate,
+    showHistory,
   ]);
 
   // Grand summary metrics
@@ -870,27 +1137,51 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
     let totalMaintenancePending = 0;
 
     for (const item of auditedProperties) {
-      const s = item.status;
-      if (includeRent) {
-        totalRentBilled += s.currentMonthRentCharge + s.previousBalance;
-        totalRentPaid += s.paidRentThisMonth;
-        totalRentPending += s.pendingRentBalance;
-        totalLateFees += s.totalLateFees;
-      }
-      if (includeWater && item.property.utilitiesWaterActive) {
-        totalWaterBilled += s.waterAmount;
-        totalWaterPaid += s.paidWaterThisMonth;
-        totalWaterPending += s.pendingWaterBalance;
-      }
-      if (includeElectric && item.property.utilitiesElectricActive) {
-        totalElectricBilled += s.electricAmount;
-        totalElectricPaid += s.paidElectricThisMonth;
-        totalElectricPending += s.pendingElectricBalance;
-      }
-      if (includeMaintenance && item.property.utilitiesMaintenanceActive) {
-        totalMaintenanceBilled += s.maintenanceAmount;
-        totalMaintenancePaid += s.paidMaintenanceThisMonth;
-        totalMaintenancePending += s.pendingMaintenanceBalance;
+      if (showHistory) {
+        const h = item.historyData;
+        if (includeRent) {
+          totalRentBilled += h.rentTotalObligations;
+          totalRentPaid += h.rentTotalPayments;
+          totalRentPending += h.rentFinalBalance;
+        }
+        if (includeWater && item.property.utilitiesWaterActive) {
+          totalWaterBilled += h.waterTotalObligations;
+          totalWaterPaid += h.waterTotalPayments;
+          totalWaterPending += h.waterFinalBalance;
+        }
+        if (includeElectric && item.property.utilitiesElectricActive) {
+          totalElectricBilled += h.electricTotalObligations;
+          totalElectricPaid += h.electricTotalPayments;
+          totalElectricPending += h.electricFinalBalance;
+        }
+        if (includeMaintenance && item.property.utilitiesMaintenanceActive) {
+          totalMaintenanceBilled += h.maintenanceTotalObligations;
+          totalMaintenancePaid += h.maintenanceTotalPayments;
+          totalMaintenancePending += h.maintenanceFinalBalance;
+        }
+      } else {
+        const s = item.status;
+        if (includeRent) {
+          totalRentBilled += s.currentMonthRentCharge + s.previousBalance;
+          totalRentPaid += s.paidRentThisMonth;
+          totalRentPending += s.pendingRentBalance;
+          totalLateFees += s.totalLateFees;
+        }
+        if (includeWater && item.property.utilitiesWaterActive) {
+          totalWaterBilled += s.waterAmount;
+          totalWaterPaid += s.paidWaterThisMonth;
+          totalWaterPending += s.pendingWaterBalance;
+        }
+        if (includeElectric && item.property.utilitiesElectricActive) {
+          totalElectricBilled += s.electricAmount;
+          totalElectricPaid += s.paidElectricThisMonth;
+          totalElectricPending += s.pendingElectricBalance;
+        }
+        if (includeMaintenance && item.property.utilitiesMaintenanceActive) {
+          totalMaintenanceBilled += s.maintenanceAmount;
+          totalMaintenancePaid += s.paidMaintenanceThisMonth;
+          totalMaintenancePending += s.pendingMaintenanceBalance;
+        }
       }
     }
 
@@ -984,15 +1275,21 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <a
-              href="/app-codigo-actualizado.zip"
-              download="app-codigo-actualizado.zip"
-              className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer no-underline"
-              title="Descargar código fuente actualizado completo en formato comprimido (.ZIP)"
-            >
-              <FolderArchive className="w-4 h-4" />
-              <span>Descargar Código (.ZIP)</span>
-            </a>
+            {/* Botón de descarga de código .ZIP protegido: Exclusivo para la cuenta de desarrollador / VIP */}
+            {isDeveloperUser && (
+              <a
+                href="/app-codigo-actualizado.zip"
+                download="app-codigo-actualizado.zip"
+                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer no-underline"
+                title="Descargar código fuente actualizado completo (.ZIP) — Exclusivo Cuenta de Desarrollador / VIP"
+              >
+                <FolderArchive className="w-4 h-4 text-emerald-200" />
+                <span>Descargar Código (.ZIP)</span>
+                <span className="px-1.5 py-0.2 bg-emerald-950/70 text-emerald-200 text-[10px] font-extrabold rounded">
+                  DEV
+                </span>
+              </a>
+            )}
             <button
               onClick={handlePrintLedger}
               className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
@@ -1209,6 +1506,143 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Panel de Período del Historial (Visible cuando HISTORIAL está activo) */}
+        {showHistory && (
+          <div className="pt-3 border-t border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/60 dark:bg-emerald-950/30 p-3.5 rounded-xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CalendarRange className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="text-xs font-black text-emerald-950 dark:text-emerald-200 uppercase tracking-wide">
+                  Período de Fechas a Reportar en Historial:
+                </span>
+                <span className="px-2 py-0.5 bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 text-[10px] font-black rounded-md">
+                  {historyPreset === 'all' || (!historyStartDate && !historyEndDate)
+                    ? 'TODO EL HISTORIAL COMPLETO'
+                    : historyPreset === '6m'
+                    ? 'ÚLTIMOS 6 MESES'
+                    : historyPreset === '12m'
+                    ? 'ÚLTIMOS 12 MESES'
+                    : historyPreset === '24m'
+                    ? 'ÚLTIMOS 2 AÑOS'
+                    : 'RANGO PERSONALIZADO'}
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                Seleccione un período rápido o ingrese fechas en el calendario
+              </span>
+            </div>
+
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+              {/* Opciones Preseleccionadas */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleSetPreset('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition flex items-center gap-1.5 cursor-pointer border ${
+                    historyPreset === 'all' || (!historyStartDate && !historyEndDate)
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-slate-800'
+                  }`}
+                  title="Incluye todos los pagos y obligaciones contractuales históricas sin límite de tiempo"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>TODO</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSetPreset('6m')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                    historyPreset === '6m'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-slate-800'
+                  }`}
+                  title="Últimos 6 meses anteriores a la fecha de cómputo"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Últimos 6 meses</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSetPreset('12m')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                    historyPreset === '12m'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-slate-800'
+                  }`}
+                  title="Últimos 12 meses (1 año) anteriores a la fecha de cómputo"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Últimos 12 meses</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSetPreset('24m')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                    historyPreset === '24m'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-slate-800'
+                  }`}
+                  title="Últimos 2 años (24 meses) anteriores a la fecha de cómputo"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Últimos 2 años</span>
+                </button>
+              </div>
+
+              {/* Cuadros de Calendario: Fecha Inicio y Fecha Final */}
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 shrink-0">
+                    Fecha Inicio:
+                  </label>
+                  <input
+                    type="date"
+                    value={historyStartDate}
+                    onChange={(e) => handleStartDateChange(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 shrink-0">
+                    Fecha Final:
+                  </label>
+                  <input
+                    type="date"
+                    value={historyEndDate}
+                    onChange={(e) => handleEndDateChange(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+
+                {(historyStartDate || historyEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => handleSetPreset('all')}
+                    className="px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 dark:hover:text-white underline font-bold cursor-pointer shrink-0"
+                    title="Restablecer para ver todo el historial sin límite de fechas"
+                  >
+                    Ver Todo
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Nota explicativa de cálculo y auditoría */}
+            <div className="text-[11px] text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5 pt-0.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>
+                {historyPreset === 'all' || (!historyStartDate && !historyEndDate)
+                  ? 'Mostrando todos los pagos y obligaciones contractuales históricas de las propiedades seleccionadas, con balances calculados después de cada transacción.'
+                  : `Reportando período del ${historyStartDate ? formatDate(historyStartDate) : 'inicio'} al ${historyEndDate ? formatDate(historyEndDate) : formatDate(computationDate)}. Los movimientos anteriores se arrastran automáticamente en el renglón de Saldo Anterior.`}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 2. Resumen KPI Cards */}
@@ -1309,9 +1743,16 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
               Fecha de Cómputo: {formatDate(computationDate)}
             </span>
             {showHistory && (
-              <span className="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-black rounded mt-1">
-                HISTORIAL ACTIVO: Balances Progresivos Transacción por Transacción
-              </span>
+              <div className="mt-1 space-y-0.5">
+                <span className="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-black rounded">
+                  HISTORIAL: Balances Progresivos Transacción por Transacción
+                </span>
+                <span className="block text-[10px] text-emerald-900 font-bold">
+                  Período: {historyPreset === 'all' || (!historyStartDate && !historyEndDate)
+                    ? 'Todo el Historial Completo'
+                    : `${historyStartDate ? formatDate(historyStartDate) : 'Inicio'} al ${historyEndDate ? formatDate(historyEndDate) : formatDate(computationDate)}`}
+                </span>
+              </div>
             )}
             <span className="block text-[10px] text-slate-400 mt-0.5">
               Emitido el {formatDate(new Date().toISOString().split('T')[0])}

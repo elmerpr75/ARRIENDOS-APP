@@ -647,6 +647,7 @@ export default function App() {
             profile={profile}
             onOpenInvoice={handleOpenInvoice}
             onRegisterPayment={handleOpenPayment}
+            canExportCode={subscriptionState.canExportCode}
           />
         )}
 

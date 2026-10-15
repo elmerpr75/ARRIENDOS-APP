@@ -14,7 +14,10 @@ import {
   uploadBackupToDrive,
   listBackupsFromDrive,
   downloadBackupFromDrive,
+  deleteFileFromDrive,
+  pruneOldBackupsFromDrive,
   DriveBackupFile,
+  PruneBackupsResult,
 } from '../utils/googleDrive';
 import { exportAppData, importAppData } from '../utils/storage';
 import {
@@ -33,6 +36,8 @@ import {
   Copy,
   Download,
   Upload,
+  Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 import { SupportedLanguage, translations } from '../utils/i18n';
 import { isLifetimeVip } from '../utils/subscription';
@@ -64,6 +69,8 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isPruning, setIsPruning] = useState(false);
+  const [pruneStatus, setPruneStatus] = useState<PruneBackupsResult | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [backupFiles, setBackupFiles] = useState<DriveBackupFile[]>([]);
   const [confirmingRestore, setConfirmingRestore] = useState<{
@@ -343,13 +350,21 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
 
       const result = await uploadBackupToDrive(token, backupContent, cleanFolder);
 
+      if (result.pruneResult) {
+        setPruneStatus(result.pruneResult);
+      }
+
       const locationNotice = result.isRootBackup && cleanFolder
         ? ' (Guardado en Mi Unidad / Raíz de Drive por permisos de carpeta)'
         : '';
 
+      const pruneNotice = result.pruneResult?.deletedCount && result.pruneResult.deletedCount > 0
+        ? ` • Se aplicó la política de retención: se depuraron ${result.pruneResult.deletedCount} copia(s) obsoleta(s) para liberar espacio en Google Drive.`
+        : '';
+
       setStatusMessage({
         type: 'success',
-        text: `¡Copia de seguridad subida con éxito a Google Drive!${locationNotice} Archivo: ${result.fileName}`,
+        text: `¡Copia de seguridad subida con éxito a Google Drive!${locationNotice} Archivo: ${result.fileName}.${pruneNotice}`,
       });
 
       // Refresh file list
@@ -378,6 +393,56 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
       });
     } finally {
       setIsBackingUp(false);
+    }
+  };
+
+  // Manual execution of retention policy to prune obsolete backups
+  const handleManualPrune = async () => {
+    try {
+      setIsPruning(true);
+      setStatusMessage(null);
+
+      let token = await getAccessToken();
+      if (!token) {
+        const signResult = await googleSignIn();
+        if (!signResult?.accessToken) {
+          setStatusMessage({
+            type: 'info',
+            text: 'Operación cancelada. Conecta tu cuenta de Google para depurar respaldos.',
+          });
+          return;
+        }
+        token = signResult.accessToken;
+        setCurrentUser(signResult.user);
+        setHasValidToken(true);
+      }
+
+      const cleanFolder = extractFolderId(folderInput);
+      const pruneRes = await pruneOldBackupsFromDrive(token, cleanFolder || undefined);
+      setPruneStatus(pruneRes);
+
+      if (pruneRes.deletedCount > 0) {
+        setStatusMessage({
+          type: 'success',
+          text: `✓ Depuración exitosa: Se eliminaron ${pruneRes.deletedCount} archivo(s) JSON obsoleto(s) (más allá de los últimos 350 archivos y 6 meses). Se resguardan ${pruneRes.keptCount} respaldos vigentes en Google Drive.`,
+        });
+      } else {
+        setStatusMessage({
+          type: 'info',
+          text: `✓ Tu Google Drive está al día y optimizado. Se escanearon ${pruneRes.totalScanned} archivos y ninguno requería depuración bajo la regla de retención (últimos 350 archivos o 6 meses, lo que sea mayor).`,
+        });
+      }
+
+      // Refresh list
+      await fetchDriveFiles(token);
+    } catch (err: any) {
+      console.warn('Manual prune issue:', err);
+      setStatusMessage({
+        type: 'error',
+        text: `Error al depurar copias en Google Drive: ${err.message || err}`,
+      });
+    } finally {
+      setIsPruning(false);
     }
   };
 
@@ -786,6 +851,54 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
                   </span>
                 </div>
               </button>
+            </div>
+
+            {/* Política de Retención Automática y Limpieza de Espacio (Anti-acumulación) */}
+            <div className="p-3.5 bg-emerald-50/70 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800/60 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-emerald-950 dark:text-emerald-100 uppercase tracking-wide">
+                      Política de Retención Inteligente (Anti-acumulación)
+                    </h4>
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300 font-medium">
+                      Conserva los <strong>últimos 350 archivos o 6 meses (lo que sea mayor)</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                {currentUser && hasValidToken && (
+                  <button
+                    type="button"
+                    onClick={handleManualPrune}
+                    disabled={isPruning}
+                    className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-slate-700 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50 self-start sm:self-center shrink-0"
+                    title="Ejecuta la regla de retención para eliminar copias obsoletas más allá de 350 archivos y 6 meses"
+                  >
+                    {isPruning ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    )}
+                    <span>{isPruning ? 'Depurando en Drive...' : 'Limpiar Respaldos Obsoletos'}</span>
+                  </button>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                Al crear cada nuevo respaldo en Google Drive, el sistema instruye automáticamente la depuración de copias JSON antiguas de la aplicación que excedan ambos límites. Así, la cuenta compartida nunca acumula archivos basura innecesarios y solo quien tiene permisos de modificación retira el contenido obsoleto de forma segura.
+              </p>
+
+              {pruneStatus && (
+                <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-emerald-300 dark:border-emerald-800 text-[11px] text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-2">
+                  <span>
+                    ✓ Estado de retención: <strong>{pruneStatus.deletedCount} archivo(s) obsoleto(s) eliminado(s)</strong> y <strong>{pruneStatus.keptCount} respaldos vigentes resguardados</strong> en tu Google Drive.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* 4. Backup History in Google Drive */}
