@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Property, Payment, Administrator, LandlordProfile } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Property, Payment, Administrator, LandlordProfile, Expense } from '../types';
 import {
   calculatePropertyStatus,
   formatCurrency,
@@ -36,11 +36,18 @@ import {
   ArrowUpRight,
   Receipt,
   CalendarRange,
+  TrendingDown,
+  Tag,
+  Layers,
+  ArrowDownLeft,
+  Scale,
 } from 'lucide-react';
 
 interface AccountingAuditViewProps {
   properties: Property[];
   payments: Payment[];
+  expenses?: Expense[];
+  expenseCategories?: string[];
   administrators: Administrator[];
   profile?: LandlordProfile;
   onOpenInvoice?: (status: any, mode?: 'current' | 'next_month') => void;
@@ -51,10 +58,10 @@ interface AccountingAuditViewProps {
 export interface HistoricalLedgerEntry {
   id: string;
   date: string; // YYYY-MM-DD
-  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento';
+  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento' | 'gasto';
   conceptName: string;
   transactionTitle: string;
-  obligationAmount: number | null; // Cantidad obligación contractual
+  obligationAmount: number | null; // Cantidad obligación contractual o gasto incurrido
   contractualDueDate: string | null; // Fecha contractual a pagarla
   paymentAmount: number | null; // Cantidad registrada pagada
   paymentDate: string | null; // Fecha en que se pagó
@@ -65,6 +72,21 @@ export interface HistoricalLedgerEntry {
   payerName?: string;
   method?: string;
   reference?: string;
+  category?: string;
+}
+
+export interface CashflowLedgerEntry {
+  id: string;
+  date: string; // YYYY-MM-DD
+  type: 'income' | 'expense';
+  concept: string; // Ej: Cobro Renta, Gasto Plomería, etc.
+  category: string;
+  payeeOrPayer?: string;
+  receiptOrReference?: string;
+  incomeAmount: number | null; // Ingreso cobrado (+)
+  expenseAmount: number | null; // Gasto incurrido (-)
+  runningBalance: number; // Balance progresivo (Ingresos Cobrados - Gastos)
+  notes?: string;
 }
 
 export interface PropertyHistoricalData {
@@ -88,6 +110,16 @@ export interface PropertyHistoricalData {
   maintenanceTotalPayments: number;
   maintenanceFinalBalance: number;
 
+  // Gastos Operativos de la Propiedad
+  expenseEntries: HistoricalLedgerEntry[];
+  expenseTotalAmount: number;
+
+  // Conciliación de Flujo: Ingresos Cobrados vs Gastos Incurridos (Computado Consecutivamente por Fechas)
+  cashflowEntries: CashflowLedgerEntry[];
+  totalCashIncome: number;
+  totalCashExpenses: number;
+  netCashflowBalance: number;
+
   grandTotalObligations: number;
   grandTotalPayments: number;
   grandFinalBalance: number;
@@ -103,7 +135,7 @@ export interface PropertyHistoricalData {
 function applyHistoryDateFilter(
   entries: HistoricalLedgerEntry[],
   conceptName: string,
-  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento',
+  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento' | 'gasto',
   startDateStr?: string,
   endDateStr?: string
 ): {
@@ -202,6 +234,8 @@ export function generatePropertyHistoricalData(
   includeWater: boolean,
   includeElectric: boolean,
   includeMaintenance: boolean,
+  includeExpenses: boolean,
+  propExpenses: Expense[],
   companyAdmin: Administrator,
   historyStartDate?: string,
   historyEndDate?: string
@@ -216,12 +250,9 @@ export function generatePropertyHistoricalData(
   if (historyEndDate && historyEndDate.trim() !== '') {
     targetEnd = parseLocalDate(historyEndDate);
   } else {
-    // If no end date filter (TODO / All time), extend at least through referenceDate AND latest payment
-    const maxTime = Math.max(
-      referenceDate.getTime(),
-      latestPaymentTime ?? referenceDate.getTime()
-    );
-    targetEnd = new Date(maxTime);
+    // If no end date filter, evaluate strictly up to referenceDate (current date/period)
+    // Never extend contractual obligations to future cycles that have not matured yet!
+    targetEnd = referenceDate;
   }
 
   const refTime = targetEnd.getTime();
@@ -256,14 +287,82 @@ export function generatePropertyHistoricalData(
   const totalMonths = (refYear - startYear) * 12 + (refMonth - startMonth);
   const totalCycles = Math.max(1, totalMonths + 1);
 
-  // Track matched payments to avoid double-counting or omitting any
-  const matchedPaymentIds = new Set<string>();
-
   // 1. Renta & Moras
   const rentEntries: HistoricalLedgerEntry[] = [];
   let rentRunning = 0;
 
   if (includeRent) {
+    // Collect all rent and late fee payments for this property
+    const rentPaymentsList: Array<{
+      id: string;
+      date: string;
+      rentAmt: number;
+      lateAmt: number;
+      pay: Payment;
+    }> = [];
+
+    for (const pay of propPayments) {
+      const rAmt = Number(pay.appliedToRent) || (pay.concept === 'renta' ? Number(pay.amount) : 0);
+      const lateAmt = Number(pay.appliedToLateFees) || (pay.concept === 'mora' ? Number(pay.amount) : 0);
+      const isGeneric = (!pay.concept || pay.concept === 'general') &&
+        !pay.appliedToRent && !pay.appliedToLateFees && !pay.appliedToWater && !pay.appliedToElectric && !pay.appliedToMaintenance && !pay.appliedToDeposit;
+      const effectiveRentAmt = rAmt > 0 ? rAmt : (isGeneric ? Number(pay.amount) : 0);
+
+      if (effectiveRentAmt > 0 || lateAmt > 0) {
+        rentPaymentsList.push({
+          id: pay.id,
+          date: pay.date,
+          rentAmt: effectiveRentAmt,
+          lateAmt,
+          pay,
+        });
+
+        if (effectiveRentAmt > 0) {
+          rentEntries.push({
+            id: `rent-pay-${pay.id}`,
+            date: pay.date,
+            conceptType: 'renta',
+            conceptName: 'Renta Contractual',
+            transactionTitle: `Pago Registrado: Renta (${pay.period || 'Abono de Renta'})`,
+            obligationAmount: null,
+            contractualDueDate: null,
+            paymentAmount: effectiveRentAmt,
+            paymentDate: pay.date,
+            runningBalance: 0,
+            notes: `Pagado por ${pay.payerName || property.tenant1.name} vía ${(pay.paymentMethod || 'transferencia').toUpperCase()}${pay.reference ? ` (Ref: ${pay.reference})` : ''}. ${pay.applicationFootnote || 'Acreditado a cuenta de renta.'}`,
+            isPayment: true,
+            isLateFee: false,
+            payerName: pay.payerName,
+            method: pay.paymentMethod,
+            reference: pay.reference,
+          });
+        }
+
+        if (lateAmt > 0) {
+          rentEntries.push({
+            id: `mora-pay-${pay.id}`,
+            date: pay.date,
+            conceptType: 'mora',
+            conceptName: 'Recargos por Demora',
+            transactionTitle: `Pago Registrado: Recargos por Demora (${pay.period || 'Abono Moras'})`,
+            obligationAmount: null,
+            contractualDueDate: null,
+            paymentAmount: lateAmt,
+            paymentDate: pay.date,
+            runningBalance: 0,
+            notes: `Abono de ${formatCurrency(lateAmt, companyAdmin.currencySymbol)} acreditado a liquidar penalidades por demora.`,
+            isPayment: true,
+            isLateFee: true,
+            payerName: pay.payerName,
+            method: pay.paymentMethod,
+            reference: pay.reference,
+          });
+        }
+      }
+    }
+
+    let accumulatedObligationsSoFar = 0;
+
     for (let c = 0; c < totalCycles; c++) {
       const monthIdx = startMonth + c;
       const cYear = startYear + Math.floor(monthIdx / 12);
@@ -276,11 +375,13 @@ export function generatePropertyHistoricalData(
       const periodNameCap = periodName.charAt(0).toUpperCase() + periodName.slice(1);
 
       const graceDays = Math.max(0, property.graceDays ?? 3);
-      const graceDate = new Date(cYear, cMonth, dueDay + graceDays, 0, 0, 0, 0);
+      const graceDate = new Date(cYear, cMonth, dueDay + graceDays, 23, 59, 59, 999);
       const graceDateStr = `${graceDate.getFullYear()}-${String(graceDate.getMonth() + 1).padStart(2, '0')}-${String(graceDate.getDate()).padStart(2, '0')}`;
 
-      if (refTime >= dueDate.getTime()) {
-        // Contractual rent obligation
+      // Only accrue contractual obligation if due date has arrived (due date <= evaluation cutoff refTime)
+      if (dueDate.getTime() <= refTime) {
+        accumulatedObligationsSoFar += property.rentAmount;
+
         rentEntries.push({
           id: `rent-obl-${cYear}-${cMonth}`,
           date: dueDateStr,
@@ -297,73 +398,25 @@ export function generatePropertyHistoricalData(
           isLateFee: false,
         });
 
-        // Rent payments for this cycle
-        const matchingRentPays = propPayments.filter((p) => {
-          if (matchedPaymentIds.has(p.id)) return false;
-          if (p.period && p.period.toLowerCase().trim() === periodNameCap.toLowerCase().trim()) return true;
-          const pDate = parseLocalDate(p.date);
-          return pDate.getFullYear() === cYear && pDate.getMonth() === cMonth;
-        });
+        // Evaluate whether late fee applies for this cycle:
+        // We verify the tenant's cumulative rent balance at the grace deadline (graceDate).
+        // Total rent paid by tenant on or before grace date (includes all prior advance payments + payments during grace):
+        const rentPaidOnOrBeforeGrace = rentPaymentsList
+          .filter((item) => parseLocalDate(item.date).getTime() <= graceDate.getTime())
+          .reduce((sum, item) => sum + item.rentAmt, 0);
 
-        let paidRentInCycle = 0;
-        for (const pay of matchingRentPays) {
-          const rentAmt = Number(pay.appliedToRent) || (pay.concept === 'renta' ? Number(pay.amount) : 0);
-          if (rentAmt > 0) {
-            paidRentInCycle += rentAmt;
-            matchedPaymentIds.add(pay.id);
-            rentEntries.push({
-              id: `rent-pay-${pay.id}`,
-              date: pay.date,
-              conceptType: 'renta',
-              conceptName: 'Renta Contractual',
-              transactionTitle: `Pago Registrado: Renta (${periodNameCap})`,
-              obligationAmount: null,
-              contractualDueDate: dueDateStr,
-              paymentAmount: rentAmt,
-              paymentDate: pay.date,
-              runningBalance: 0,
-              notes: `Pagado por ${pay.payerName || property.tenant1.name} vía ${(pay.paymentMethod || 'transferencia').toUpperCase()}${pay.reference ? ` (Ref: ${pay.reference})` : ''}. ${pay.applicationFootnote || 'Acreditado a cuenta de renta.'}`,
-              isPayment: true,
-              isLateFee: false,
-              payerName: pay.payerName,
-              method: pay.paymentMethod,
-              reference: pay.reference,
-            });
-          }
+        const netBalanceAtGrace = accumulatedObligationsSoFar - rentPaidOnOrBeforeGrace;
 
-          const lateAmt = Number(pay.appliedToLateFees) || (pay.concept === 'mora' ? Number(pay.amount) : 0);
-          if (lateAmt > 0) {
-            matchedPaymentIds.add(pay.id);
-            rentEntries.push({
-              id: `mora-pay-${pay.id}`,
-              date: pay.date,
-              conceptType: 'mora',
-              conceptName: 'Recargos por Demora',
-              transactionTitle: `Pago Registrado: Recargos por Demora (${periodNameCap})`,
-              obligationAmount: null,
-              contractualDueDate: graceDateStr,
-              paymentAmount: lateAmt,
-              paymentDate: pay.date,
-              runningBalance: 0,
-              notes: `Abono de ${formatCurrency(lateAmt, companyAdmin.currencySymbol)} acreditado a liquidar penalidades por demora.`,
-              isPayment: true,
-              isLateFee: true,
-              payerName: pay.payerName,
-              method: pay.paymentMethod,
-              reference: pay.reference,
-            });
-          }
-        }
-
-        // Late fee calculation if past grace period
-        const unpaidRent = Math.max(0, property.rentAmount - paidRentInCycle);
-        if (refTime > graceDate.getTime() && unpaidRent > 0) {
+        // CRITICAL: If the tenant maintains credit or zero balance (netBalanceAtGrace <= 0),
+        // NO LATE FEES CAN BE COMPUTED OR CHARGED!
+        if (netBalanceAtGrace > 0 && refTime > graceDate.getTime()) {
+          const unpaidRent = Math.min(property.rentAmount, netBalanceAtGrace);
           const lateResult = computeMonthlyLateFee(
             property,
             dueDay,
             cYear,
             cMonth,
-            referenceDate,
+            targetEnd,
             unpaidRent
           );
 
@@ -382,68 +435,12 @@ export function generatePropertyHistoricalData(
               paymentAmount: null,
               paymentDate: null,
               runningBalance: 0,
-              notes: `Excedida ventana de gracia de ${graceDays} días (límite: ${formatDate(graceDateStr)}). Cargo base: ${formatCurrency(lateResult.lateFeeBase, companyAdmin.currencySymbol)} + Demora diaria: ${lateResult.effectiveDailyDays}d × ${formatCurrency(property.lateFeeDaily, companyAdmin.currencySymbol)}/día = ${formatCurrency(lateResult.lateFeeDaily, companyAdmin.currencySymbol)}.${lateResult.cappedNotice ? ` ${lateResult.cappedNotice}` : ''}`,
+              notes: `Excedida ventana de gracia de ${graceDays} días sin liquidar saldo pendiente (${formatCurrency(unpaidRent, companyAdmin.currencySymbol)}). Cargo base: ${formatCurrency(lateResult.lateFeeBase, companyAdmin.currencySymbol)} + Demora diaria: ${lateResult.effectiveDailyDays}d × ${formatCurrency(property.lateFeeDaily, companyAdmin.currencySymbol)}/día = ${formatCurrency(lateResult.lateFeeDaily, companyAdmin.currencySymbol)}.${lateResult.cappedNotice ? ` ${lateResult.cappedNotice}` : ''}`,
               isPayment: false,
               isLateFee: true,
             });
           }
         }
-      }
-    }
-
-    // Capture any remaining unmatched payments under Rent & Moras
-    for (const pay of propPayments) {
-      if (matchedPaymentIds.has(pay.id)) continue;
-      const rAmt = Number(pay.appliedToRent) || (pay.concept === 'renta' ? Number(pay.amount) : 0);
-      const lateAmt = Number(pay.appliedToLateFees) || (pay.concept === 'mora' ? Number(pay.amount) : 0);
-
-      // Also catch any generic/unassigned payment if no utilities took it
-      const isGeneric = (!pay.concept || pay.concept === 'general') &&
-        !pay.appliedToRent && !pay.appliedToLateFees && !pay.appliedToWater && !pay.appliedToElectric && !pay.appliedToMaintenance;
-      const effectiveRentAmt = rAmt > 0 ? rAmt : (isGeneric ? Number(pay.amount) : 0);
-
-      if (effectiveRentAmt > 0) {
-        matchedPaymentIds.add(pay.id);
-        rentEntries.push({
-          id: `rent-extra-${pay.id}`,
-          date: pay.date,
-          conceptType: 'renta',
-          conceptName: 'Renta Contractual',
-          transactionTitle: `Abono de Renta Registrado (${pay.period || 'Histórico General'})`,
-          obligationAmount: null,
-          contractualDueDate: null,
-          paymentAmount: effectiveRentAmt,
-          paymentDate: pay.date,
-          runningBalance: 0,
-          notes: `Abono recibido de ${pay.payerName || property.tenant1.name} vía ${(pay.paymentMethod || 'transferencia').toUpperCase()}${pay.reference ? ` (Ref: ${pay.reference})` : ''}. ${pay.applicationFootnote || 'Acreditado a cuenta de renta.'}`,
-          isPayment: true,
-          isLateFee: false,
-          payerName: pay.payerName,
-          method: pay.paymentMethod,
-          reference: pay.reference,
-        });
-      }
-
-      if (lateAmt > 0) {
-        matchedPaymentIds.add(pay.id);
-        rentEntries.push({
-          id: `mora-extra-${pay.id}`,
-          date: pay.date,
-          conceptType: 'mora',
-          conceptName: 'Recargos por Demora',
-          transactionTitle: `Pago Registrado: Recargos por Demora (${pay.period || 'Histórico General'})`,
-          obligationAmount: null,
-          contractualDueDate: null,
-          paymentAmount: lateAmt,
-          paymentDate: pay.date,
-          runningBalance: 0,
-          notes: `Abono de ${formatCurrency(lateAmt, companyAdmin.currencySymbol)} acreditado a liquidar penalidades por demora.`,
-          isPayment: true,
-          isLateFee: true,
-          payerName: pay.payerName,
-          method: pay.paymentMethod,
-          reference: pay.reference,
-        });
       }
     }
 
@@ -816,6 +813,159 @@ export function generatePropertyHistoricalData(
     historyEndDate
   );
 
+  // 5. Gastos Operativos Incurridos (Cuenta Segregada de Egresos)
+  const expenseEntries: HistoricalLedgerEntry[] = [];
+  if (includeExpenses && propExpenses.length > 0) {
+    for (const exp of propExpenses) {
+      expenseEntries.push({
+        id: `exp-${exp.id}`,
+        date: exp.date,
+        conceptType: 'gasto',
+        conceptName: `Gasto: ${exp.category}`,
+        transactionTitle: `${exp.category}: ${exp.description}`,
+        obligationAmount: Number(exp.amount) || 0,
+        contractualDueDate: exp.date,
+        paymentAmount: null,
+        paymentDate: null,
+        runningBalance: 0,
+        notes: `${exp.vendorOrPayee ? `Proveedor: ${exp.vendorOrPayee}. ` : ''}${exp.receiptNumber ? `Factura/Recibo: #${exp.receiptNumber}. ` : ''}${exp.description}`,
+        isPayment: false,
+        isLateFee: false,
+        payerName: exp.vendorOrPayee,
+        reference: exp.receiptNumber,
+        category: exp.category,
+      });
+    }
+  }
+
+  const expenseResult = applyHistoryDateFilter(
+    expenseEntries,
+    'Gastos Operativos',
+    'gasto',
+    historyStartDate,
+    historyEndDate
+  );
+
+  // 6. Conciliación Consecutiva por Fechas: Ingresos Cobrados vs Gastos Incurridos
+  const cashflowRaw: Array<{
+    id: string;
+    date: string;
+    type: 'income' | 'expense';
+    concept: string;
+    category: string;
+    payeeOrPayer?: string;
+    receiptOrReference?: string;
+    incomeAmount: number | null;
+    expenseAmount: number | null;
+    notes?: string;
+  }> = [];
+
+  // A. Ingresos Cobrados de las partidas seleccionadas
+  for (const p of propPayments) {
+    const isRentMatch = includeRent && ((p.appliedToRent || (p.concept === 'renta' ? p.amount : 0)) > 0 || (p.concept === 'mora' || p.concept === 'deposito'));
+    const isWaterMatch = includeWater && (p.appliedToWater || (p.concept === 'agua' ? p.amount : 0)) > 0;
+    const isElectricMatch = includeElectric && (p.appliedToElectric || (p.concept === 'electricidad' ? p.amount : 0)) > 0;
+    const isMaintMatch = includeMaintenance && (p.appliedToMaintenance || (p.concept === 'mantenimiento' ? p.amount : 0)) > 0;
+    const isGeneralMatch = (includeRent || includeWater || includeElectric || includeMaintenance) && (!p.concept || p.concept === 'general');
+
+    if (isRentMatch || isWaterMatch || isElectricMatch || isMaintMatch || isGeneralMatch) {
+      cashflowRaw.push({
+        id: `cf-pay-${p.id}`,
+        date: p.date,
+        type: 'income',
+        concept: `Cobro Recibido: ${p.period || 'General'} (${p.concept || 'Pago'})`,
+        category: p.concept || 'Cobro',
+        payeeOrPayer: p.payerName,
+        receiptOrReference: p.reference,
+        incomeAmount: Number(p.amount) || 0,
+        expenseAmount: null,
+        notes: p.notes || (p.paymentMethod ? `Método: ${p.paymentMethod}` : undefined),
+      });
+    }
+  }
+
+  // B. Gastos Incurridos (si includeExpenses está activo)
+  if (includeExpenses) {
+    for (const exp of propExpenses) {
+      cashflowRaw.push({
+        id: `cf-exp-${exp.id}`,
+        date: exp.date,
+        type: 'expense',
+        concept: `Gasto: ${exp.category} - ${exp.description}`,
+        category: exp.category,
+        payeeOrPayer: exp.vendorOrPayee,
+        receiptOrReference: exp.receiptNumber,
+        incomeAmount: null,
+        expenseAmount: Number(exp.amount) || 0,
+        notes: `${exp.vendorOrPayee ? `Proveedor: ${exp.vendorOrPayee}. ` : ''}${exp.receiptNumber ? `Factura/Recibo: #${exp.receiptNumber}` : ''}`,
+      });
+    }
+  }
+
+  // Ordenar cronológicamente por fecha
+  cashflowRaw.sort((a, b) => {
+    const cmp = parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime();
+    if (cmp !== 0) return cmp;
+    if (a.type === 'income' && b.type === 'expense') return -1;
+    if (a.type === 'expense' && b.type === 'income') return 1;
+    return 0;
+  });
+
+  // Filtrar por rango de fechas si se definió
+  const startTime = historyStartDate && historyStartDate.trim() !== '' ? parseLocalDate(historyStartDate).getTime() : null;
+  const endTime = historyEndDate && historyEndDate.trim() !== '' ? parseLocalDate(historyEndDate).getTime() + (24 * 60 * 60 * 1000 - 1) : null;
+
+  let priorIncome = 0;
+  let priorExpenses = 0;
+  const cashflowEntries: CashflowLedgerEntry[] = [];
+
+  for (const item of cashflowRaw) {
+    const itemTime = parseLocalDate(item.date).getTime();
+    if (startTime !== null && itemTime < startTime) {
+      if (item.incomeAmount !== null) priorIncome += item.incomeAmount;
+      if (item.expenseAmount !== null) priorExpenses += item.expenseAmount;
+    } else if (endTime === null || itemTime <= endTime) {
+      cashflowEntries.push({
+        ...item,
+        runningBalance: 0,
+      });
+    }
+  }
+
+  // Si hay saldo previo antes de startTime, añadir renglón de apertura de flujo
+  const priorCashBalance = Math.round((priorIncome - priorExpenses) * 100) / 100;
+  if (startTime !== null && (priorIncome > 0 || priorExpenses > 0 || priorCashBalance !== 0)) {
+    cashflowEntries.unshift({
+      id: `cf-opening-${historyStartDate}`,
+      date: historyStartDate!,
+      type: priorCashBalance >= 0 ? 'income' : 'expense',
+      concept: `Flujo Neto Anterior al Período (${formatDate(historyStartDate)})`,
+      category: 'Saldo Inicial Flujo',
+      payeeOrPayer: 'Arrastre previo',
+      incomeAmount: priorCashBalance >= 0 ? priorCashBalance : null,
+      expenseAmount: priorCashBalance < 0 ? Math.abs(priorCashBalance) : null,
+      runningBalance: priorCashBalance,
+      notes: `Balance neto de ingresos vs gastos acumulado previo a la fecha inicial (${formatDate(historyStartDate)}).`,
+    });
+  }
+
+  // Calcular balance progresivo consecutivo
+  let progressiveCash = 0;
+  for (const cf of cashflowEntries) {
+    if (cf.id.startsWith('cf-opening-')) {
+      progressiveCash = cf.runningBalance;
+    } else {
+      if (cf.incomeAmount !== null) progressiveCash += cf.incomeAmount;
+      if (cf.expenseAmount !== null) progressiveCash -= cf.expenseAmount;
+      cf.runningBalance = Math.round(progressiveCash * 100) / 100;
+    }
+  }
+
+  const totalCashIncome = cashflowEntries.reduce((s, c) => s + (c.id.startsWith('cf-opening-') ? 0 : (c.incomeAmount || 0)), 0);
+  const totalCashExpenses = cashflowEntries.reduce((s, c) => s + (c.id.startsWith('cf-opening-') ? 0 : (c.expenseAmount || 0)), 0);
+  const netCashflowBalance = Math.round((totalCashIncome - totalCashExpenses) * 100) / 100;
+
+  // Cuentas por cobrar al inquilino (exclusivamente lo debido por el inquilino)
   const grandTotalObligations =
     rentResult.totalObligations +
     waterResult.totalObligations +
@@ -855,6 +1005,16 @@ export function generatePropertyHistoricalData(
     maintenanceTotalPayments: maintenanceResult.totalPayments,
     maintenanceFinalBalance: maintenanceResult.finalBalance,
 
+    // Gastos Operativos de la Propiedad
+    expenseEntries: expenseResult.filteredEntries,
+    expenseTotalAmount: expenseResult.totalObligations,
+
+    // Conciliación de Flujo: Ingresos Cobrados vs Gastos Incurridos (Computado Consecutivamente por Fechas)
+    cashflowEntries,
+    totalCashIncome,
+    totalCashExpenses,
+    netCashflowBalance,
+
     grandTotalObligations,
     grandTotalPayments,
     grandFinalBalance,
@@ -864,6 +1024,8 @@ export function generatePropertyHistoricalData(
 export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
   properties,
   payments,
+  expenses = [],
+  expenseCategories = [],
   administrators,
   profile,
   onOpenInvoice,
@@ -900,6 +1062,51 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
   const [includeWater, setIncludeWater] = useState<boolean>(true);
   const [includeElectric, setIncludeElectric] = useState<boolean>(true);
   const [includeMaintenance, setIncludeMaintenance] = useState<boolean>(true);
+  const [includeExpenses, setIncludeExpenses] = useState<boolean>(true);
+
+  // Categorías de gastos disponibles (definidas por el usuario y registradas en gastos)
+  const allAvailableExpenseCategories = useMemo(() => {
+    const set = new Set<string>(expenseCategories || []);
+    for (const exp of (expenses || [])) {
+      if (exp.category && exp.category.trim()) set.add(exp.category.trim());
+    }
+    if (set.size === 0) {
+      set.add('Mantenimiento & Reparación');
+      set.add('Plomería & Fontanería');
+      set.add('Electricidad & Luminarias');
+      set.add('Pintura & Acabados');
+      set.add('Impuestos & Seguros');
+      set.add('Otros Gastos Operativos');
+    }
+    return Array.from(set);
+  }, [expenseCategories, expenses]);
+
+  // Conceptos/categorías de gastos seleccionadas activas en el filtro
+  const [selectedExpenseCategories, setSelectedExpenseCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (allAvailableExpenseCategories.length > 0) {
+      setSelectedExpenseCategories((prev) => {
+        if (prev.length === 0) return allAvailableExpenseCategories;
+        const valid = prev.filter((c) => allAvailableExpenseCategories.includes(c));
+        return valid.length > 0 ? valid : allAvailableExpenseCategories;
+      });
+    }
+  }, [allAvailableExpenseCategories]);
+
+  const handleToggleExpenseCategory = (cat: string) => {
+    setSelectedExpenseCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const handleSelectAllExpenseCategories = () => {
+    setSelectedExpenseCategories([...allAvailableExpenseCategories]);
+  };
+
+  const handleDeselectAllExpenseCategories = () => {
+    setSelectedExpenseCategories([]);
+  };
 
   // Historial Transaccional (Estado de Cuenta con Balances Progresivos)
   const [showHistory, setShowHistory] = useState<boolean>(false);
@@ -1059,6 +1266,31 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           (includeElectric && property.utilitiesElectricActive ? status.pendingElectricBalance : 0) +
           (includeMaintenance && property.utilitiesMaintenanceActive ? status.pendingMaintenanceBalance : 0);
 
+        // Filter expenses for this property
+        const propExpenses = (expenses || []).filter((e) => {
+          if (e.propertyId !== property.id) return false;
+          if (!includeExpenses) return false;
+          if (!selectedExpenseCategories.includes(e.category)) return false;
+
+          if (showHistory) {
+            const eTime = parseLocalDate(e.date).getTime();
+            const startTime = historyStartDate.trim() ? parseLocalDate(historyStartDate).getTime() : null;
+            const endTime = historyEndDate.trim() ? parseLocalDate(historyEndDate).getTime() + (24 * 60 * 60 * 1000 - 1) : null;
+            if (startTime !== null && eTime < startTime) return false;
+            if (endTime !== null && eTime > endTime) return false;
+          } else {
+            const eDate = parseLocalDate(e.date);
+            if (eDate.getFullYear() !== currentYear || eDate.getMonth() !== currentMonth) {
+              return false;
+            }
+          }
+          return true;
+        });
+
+        const totalPropExpenses = propExpenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
+        const totalPropIncome = status.paidRentThisMonth + status.paidWaterThisMonth + status.paidElectricThisMonth + status.paidMaintenanceThisMonth;
+        const propNetCashflow = totalPropIncome - totalPropExpenses;
+
         // Generate itemized historical audit data (transaction ledger with progressive balances)
         const historyData = generatePropertyHistoricalData(
           property,
@@ -1068,6 +1300,8 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           includeWater,
           includeElectric,
           includeMaintenance,
+          includeExpenses,
+          propExpenses,
           admin,
           showHistory ? (historyStartDate.trim() ? historyStartDate : undefined) : undefined,
           showHistory ? (historyEndDate.trim() ? historyEndDate : undefined) : undefined
@@ -1095,6 +1329,10 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           totalAccumulatedRentAndFees,
           totalAccumulatedUtilities,
           totalPropertyPending: effectivePropertyPending,
+          propExpenses,
+          totalPropExpenses,
+          totalPropIncome,
+          propNetCashflow,
           historyData,
         };
       })
@@ -1108,6 +1346,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
     eligibleProperties,
     selectedPropertyIds,
     payments,
+    expenses,
     referenceDate,
     administrators,
     onlyWithDebt,
@@ -1115,6 +1354,8 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
     includeWater,
     includeElectric,
     includeMaintenance,
+    includeExpenses,
+    selectedExpenseCategories,
     historyStartDate,
     historyEndDate,
     showHistory,
@@ -1135,6 +1376,9 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
     let totalMaintenanceBilled = 0;
     let totalMaintenancePaid = 0;
     let totalMaintenancePending = 0;
+
+    let totalExpenses = 0;
+    let totalIncomeReceived = 0;
 
     for (const item of auditedProperties) {
       if (showHistory) {
@@ -1159,6 +1403,10 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           totalMaintenancePaid += h.maintenanceTotalPayments;
           totalMaintenancePending += h.maintenanceFinalBalance;
         }
+        if (includeExpenses) {
+          totalExpenses += h.totalCashExpenses;
+          totalIncomeReceived += h.totalCashIncome;
+        }
       } else {
         const s = item.status;
         if (includeRent) {
@@ -1182,8 +1430,18 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           totalMaintenancePaid += s.paidMaintenanceThisMonth;
           totalMaintenancePending += s.pendingMaintenanceBalance;
         }
+        if (includeExpenses) {
+          totalExpenses += item.totalPropExpenses;
+          totalIncomeReceived += item.totalPropIncome;
+        }
       }
     }
+
+    if (!includeExpenses) {
+      totalIncomeReceived = totalRentPaid + totalWaterPaid + totalElectricPaid + totalMaintenancePaid;
+    }
+
+    const netOperationalBalance = Math.round((totalIncomeReceived - totalExpenses) * 100) / 100;
 
     const grandTotalPending =
       totalRentPending +
@@ -1206,9 +1464,12 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
       totalMaintenanceBilled,
       totalMaintenancePaid,
       totalMaintenancePending,
+      totalExpenses,
+      totalIncomeReceived,
+      netOperationalBalance,
       grandTotalPending,
     };
-  }, [auditedProperties, includeRent, includeWater, includeElectric, includeMaintenance]);
+  }, [auditedProperties, includeRent, includeWater, includeElectric, includeMaintenance, includeExpenses, showHistory]);
 
   // Group audited properties by administrator/company
   const propertiesByAdmin = useMemo(() => {
@@ -1438,6 +1699,22 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                 <span>Mantenimiento / Cuota</span>
               </label>
 
+              {/* Checkbox de Gastos */}
+              <label className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
+                includeExpenses
+                  ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={includeExpenses}
+                  onChange={(e) => setIncludeExpenses(e.target.checked)}
+                  className="rounded text-rose-600 focus:ring-rose-500"
+                />
+                <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
+                <span>Gastos</span>
+              </label>
+
               {/* Toggle de HISTORIAL Transaccional */}
               <label
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black cursor-pointer transition border ${
@@ -1457,6 +1734,62 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                 <span>HISTORIAL (Estado de Cuenta Transaccional)</span>
               </label>
             </div>
+
+            {/* Sub-filtros interactivos según conceptos creados en Gastos */}
+            {includeExpenses && (
+              <div className="mt-2.5 p-3 bg-rose-50/70 dark:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-900/60 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-[11px] font-black text-rose-950 dark:text-rose-200 flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Categorías de Gastos ({selectedExpenseCategories.length} de {allAvailableExpenseCategories.length} activas):</span>
+                  </span>
+                  <div className="flex items-center gap-2 text-[10px] font-bold">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllExpenseCategories}
+                      className="text-rose-700 dark:text-rose-300 hover:underline cursor-pointer"
+                    >
+                      Todas
+                    </button>
+                    <span className="text-slate-300 dark:text-slate-600">•</span>
+                    <button
+                      type="button"
+                      onClick={handleDeselectAllExpenseCategories}
+                      className="text-slate-600 dark:text-slate-400 hover:underline cursor-pointer"
+                    >
+                      Ninguna
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {allAvailableExpenseCategories.map((cat) => {
+                    const isSelected = selectedExpenseCategories.includes(cat);
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => handleToggleExpenseCategory(cat)}
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition flex items-center gap-1 cursor-pointer border ${
+                          isSelected
+                            ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                            : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-rose-300'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : 'bg-rose-500'}`} />
+                        <span>{cat}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <p className="text-[10px] text-rose-700 dark:text-rose-300 font-medium leading-tight">
+                  📌 {showHistory
+                    ? 'Historial activo: Los gastos se filtran según el rango de fechas elegido y se computan consecutivamente contra los ingresos cobrados.'
+                    : 'Período corriente: Imputa los gastos registrados correspondientes al ciclo del mes evaluado.'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Selector de Propiedades */}
@@ -1646,7 +1979,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
       </div>
 
       {/* 2. Resumen KPI Cards */}
-      <div className="no-print grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className={`no-print grid grid-cols-2 sm:grid-cols-3 ${includeExpenses ? 'lg:grid-cols-4 xl:grid-cols-8' : 'lg:grid-cols-6'} gap-3`}>
         <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
           <span className="text-[10px] font-bold uppercase text-slate-400 block">Renta Facturada</span>
           <p className="text-base font-black text-slate-900 dark:text-white mt-0.5">
@@ -1689,12 +2022,48 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           <span className="text-[10px] text-slate-400 block">Cuota de residentes</span>
         </div>
 
+        {/* Card de Gastos Incurridos */}
+        {includeExpenses && (
+          <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-rose-300 dark:border-rose-900 bg-rose-50/30 dark:bg-rose-950/20 shadow-2xs">
+            <span className="text-[10px] font-bold uppercase text-rose-700 dark:text-rose-400 block">Gastos Incurridos</span>
+            <p className="text-base font-black text-rose-600 dark:text-rose-400 mt-0.5">
+              -{formatCurrency(summaryMetrics.totalExpenses, primaryAdmin.currencySymbol)}
+            </p>
+            <span className="text-[10px] text-rose-500 font-semibold block">Egresos operativos</span>
+          </div>
+        )}
+
+        {/* Card de Flujo / Margen Neto Operativo (Ingresos vs Gastos) */}
+        {includeExpenses && (
+          <div className={`p-3 rounded-xl border shadow-2xs ${
+            summaryMetrics.netOperationalBalance >= 0
+              ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
+              : 'bg-rose-50/60 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800'
+          }`}>
+            <span className={`text-[10px] font-black uppercase block ${
+              summaryMetrics.netOperationalBalance >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-rose-800 dark:text-rose-300'
+            }`}>
+              Balance Neto Flujo
+            </span>
+            <p className={`text-base font-black mt-0.5 ${
+              summaryMetrics.netOperationalBalance >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'
+            }`}>
+              {formatCurrency(summaryMetrics.netOperationalBalance, primaryAdmin.currencySymbol)}
+            </p>
+            <span className={`text-[10px] font-semibold block ${
+              summaryMetrics.netOperationalBalance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+            }`}>
+              {summaryMetrics.netOperationalBalance >= 0 ? 'Superávit / Margen' : 'Déficit del período'}
+            </span>
+          </div>
+        )}
+
         <div className="p-3 bg-slate-900 text-white rounded-xl shadow-md border border-slate-800">
-          <span className="text-[10px] font-bold uppercase text-sky-300 block">Gran Total Pendiente</span>
-          <p className="text-base font-black text-white mt-0.5">
+          <span className="text-[10px] font-bold uppercase text-amber-300 block">Pendiente Inquilinos</span>
+          <p className="text-base font-black text-emerald-400 mt-0.5">
             {formatCurrency(summaryMetrics.grandTotalPending, primaryAdmin.currencySymbol)}
           </p>
-          <span className="text-[10px] text-slate-400 block">Total fiscalizado</span>
+          <span className="text-[10px] text-slate-400 block">Por cobrar inquilino</span>
         </div>
       </div>
 
@@ -2327,6 +2696,200 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                             )}
                           </div>
                         )}
+
+                        {/* PARTIDA 05: GASTOS OPERATIVOS INCURRIDOS (CUENTA DE EGRESOS) */}
+                        {includeExpenses && (
+                          <div className="border border-rose-200 rounded-lg overflow-hidden space-y-2">
+                            <div className="bg-rose-50 p-2.5 flex items-center justify-between border-b border-rose-200">
+                              <div className="flex items-center gap-2">
+                                <TrendingDown className="w-4 h-4 text-rose-700" />
+                                <span className="font-black text-xs text-rose-900 uppercase">
+                                  Partida 05: Gastos Operativos Incurridos (Cuenta Segregada de Egresos)
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-bold text-rose-700 uppercase">
+                                {item.historyData.expenseEntries.length} gastos registrados
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs">
+                                <thead>
+                                  <tr className="bg-rose-950 text-white text-[10px] uppercase tracking-wider">
+                                    <th className="py-2 px-2.5 font-bold w-24 text-center">Fecha</th>
+                                    <th className="py-2 px-2.5 font-bold">Concepto / Categoría</th>
+                                    <th className="py-2 px-2.5 font-bold">Detalle o Motivo</th>
+                                    <th className="py-2 px-2.5 font-bold">Proveedor / Recibo</th>
+                                    <th className="py-2 px-2.5 font-bold text-right">Monto Gasto</th>
+                                    <th className="py-2 px-2.5 font-bold text-right bg-rose-900">Total Acumulado</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-rose-100">
+                                  {item.historyData.expenseEntries.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={6} className="py-4 text-center text-slate-400 italic">
+                                        No hay gastos operativos registrados para esta propiedad en el período seleccionado.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    item.historyData.expenseEntries.map((entry) => (
+                                      <tr key={entry.id} className="hover:bg-rose-50/30 transition">
+                                        <td className="py-2 px-2.5 text-center font-semibold text-slate-700 whitespace-nowrap">
+                                          {formatDate(entry.date)}
+                                        </td>
+                                        <td className="py-2 px-2.5">
+                                          <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">
+                                            {entry.conceptName.replace('Gasto: ', '')}
+                                          </span>
+                                        </td>
+                                        <td className="py-2 px-2.5 font-bold text-slate-900">
+                                          {entry.transactionTitle}
+                                        </td>
+                                        <td className="py-2 px-2.5 text-slate-600 text-[11px]">
+                                          {entry.payerName || '-'}
+                                          {entry.reference && ` (#${entry.reference})`}
+                                        </td>
+                                        <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-rose-600">
+                                          -{formatCurrency(entry.obligationAmount || 0, companyAdmin.currencySymbol)}
+                                        </td>
+                                        <td className="py-2 px-2.5 text-right font-black whitespace-nowrap text-rose-900 bg-rose-50/50">
+                                          {formatCurrency(entry.runningBalance, companyAdmin.currencySymbol)}
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="bg-rose-50 font-black text-[11px] text-rose-900 border-t-2 border-rose-200">
+                                    <td colSpan={4} className="py-2 px-2.5 uppercase">
+                                      Total Acumulado de Gastos Operativos Propiedad:
+                                    </td>
+                                    <td className="py-2 px-2.5 text-right text-rose-700 font-black whitespace-nowrap">
+                                      {formatCurrency(item.historyData.expenseTotalAmount, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className="py-2 px-2.5 text-slate-500 font-normal text-[10px] text-right">
+                                      Cuenta de egresos
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* CONCILIACIÓN CONSECUTIVA POR FECHAS: INGRESOS COBRADOS VS GASTOS INCURRIDOS */}
+                        {includeExpenses && item.historyData.cashflowEntries.length > 0 && (
+                          <div className="border-2 border-slate-700 rounded-xl overflow-hidden space-y-2 shadow-xs bg-white">
+                            <div className="bg-slate-800 text-white p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <Scale className="w-4 h-4 text-emerald-400" />
+                                <span className="font-black text-xs uppercase tracking-wide">
+                                  Conciliación Consecutiva por Fechas: Ingresos Cobrados vs Gastos Incurridos
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-300 font-medium">
+                                Computado cronológicamente transacción por transacción para evaluar ingresos versus gastos
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs">
+                                <thead>
+                                  <tr className="bg-slate-900 text-white text-[10px] uppercase tracking-wider">
+                                    <th className="py-2 px-2.5 font-bold w-24 text-center">Fecha</th>
+                                    <th className="py-2 px-2.5 font-bold text-center w-28">Tipo</th>
+                                    <th className="py-2 px-2.5 font-bold">Concepto / Detalle / Proveedor</th>
+                                    <th className="py-2 px-2.5 font-bold text-right text-emerald-300">Ingreso Cobrado (+)</th>
+                                    <th className="py-2 px-2.5 font-bold text-right text-rose-300">Gasto Incurrido (-)</th>
+                                    <th className="py-2 px-2.5 font-bold text-right bg-slate-950 text-white">Balance Neto Consecutivo</th>
+                                    <th className="py-2 px-2.5 font-bold">Comprobante / Notas</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-200">
+                                  {item.historyData.cashflowEntries.map((cf) => (
+                                    <tr
+                                      key={cf.id}
+                                      className={`hover:bg-slate-50 transition ${
+                                        cf.type === 'income' ? 'bg-emerald-50/20' : 'bg-rose-50/20'
+                                      }`}
+                                    >
+                                      <td className="py-2 px-2.5 text-center font-semibold text-slate-700 whitespace-nowrap">
+                                        {formatDate(cf.date)}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-center">
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                            cf.type === 'income'
+                                              ? 'bg-emerald-100 text-emerald-800'
+                                              : 'bg-rose-100 text-rose-800'
+                                          }`}
+                                        >
+                                          {cf.type === 'income' ? (
+                                            <>
+                                              <ArrowUpRight className="w-3 h-3 text-emerald-600" />
+                                              <span>Ingreso</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <ArrowDownRight className="w-3 h-3 text-rose-600" />
+                                              <span>Gasto</span>
+                                            </>
+                                          )}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-2.5">
+                                        <div className="font-bold text-slate-900">
+                                          {cf.concept}
+                                        </div>
+                                        {cf.payeeOrPayer && (
+                                          <div className="text-[10px] text-slate-500">
+                                            {cf.type === 'income' ? 'Pagador:' : 'Proveedor:'} {cf.payeeOrPayer}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-right font-black text-emerald-700 whitespace-nowrap">
+                                        {cf.incomeAmount !== null ? `+${formatCurrency(cf.incomeAmount, companyAdmin.currencySymbol)}` : '-'}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-right font-black text-rose-600 whitespace-nowrap">
+                                        {cf.expenseAmount !== null ? `-${formatCurrency(cf.expenseAmount, companyAdmin.currencySymbol)}` : '-'}
+                                      </td>
+                                      <td className={`py-2 px-2.5 text-right font-black whitespace-nowrap ${
+                                        cf.runningBalance >= 0 ? 'text-emerald-700 bg-emerald-50/40' : 'text-rose-700 bg-rose-50/40'
+                                      }`}>
+                                        {formatCurrency(cf.runningBalance, companyAdmin.currencySymbol)}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-slate-600 text-[11px]">
+                                        {cf.receiptOrReference ? `Doc #${cf.receiptOrReference}. ` : ''}
+                                        {cf.notes || '-'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="bg-slate-900 text-white font-black text-xs border-t-2 border-slate-700">
+                                    <td colSpan={3} className="py-2.5 px-3 uppercase text-right">
+                                      Totales Consecutivos Propiedad:
+                                    </td>
+                                    <td className="py-2.5 px-2.5 text-right text-emerald-400">
+                                      +{formatCurrency(item.historyData.totalCashIncome, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className="py-2.5 px-2.5 text-right text-rose-400">
+                                      -{formatCurrency(item.historyData.totalCashExpenses, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className={`py-2.5 px-2.5 text-right text-sm ${
+                                      item.historyData.netCashflowBalance >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                                    }`}>
+                                      {formatCurrency(item.historyData.netCashflowBalance, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className="py-2.5 px-2.5 text-[10px] text-slate-400 font-normal">
+                                      {item.historyData.netCashflowBalance >= 0 ? 'Superávit neto' : 'Déficit del período'}
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       /* ================= MODO ESTÁNDAR: BALANCES AL CORTE ================= */
@@ -2588,36 +3151,136 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                             </div>
                           </div>
                         </div>
+
+                        {/* Tabla de Gastos Operativos Imputables de la Propiedad (Modo Estándar) */}
+                        {includeExpenses && (
+                          <div className="border border-rose-200 dark:border-rose-900/60 rounded-xl overflow-hidden bg-white dark:bg-slate-900 mt-2">
+                            <div className="bg-rose-50 dark:bg-rose-950/60 p-2.5 flex items-center justify-between border-b border-rose-200 dark:border-rose-900/60">
+                              <div className="flex items-center gap-2">
+                                <TrendingDown className="w-4 h-4 text-rose-600" />
+                                <span className="font-black text-xs text-rose-950 dark:text-rose-200 uppercase">
+                                  Gastos Operativos Imputables ({formatDate(computationDate)})
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase">
+                                {item.propExpenses.length} gastos • Total: {formatCurrency(item.totalPropExpenses, companyAdmin.currencySymbol)}
+                              </span>
+                            </div>
+
+                            {item.propExpenses.length === 0 ? (
+                              <div className="py-3 px-4 text-center text-xs text-slate-400 italic">
+                                No se registran gastos operativos para esta propiedad en el ciclo evaluado.
+                              </div>
+                            ) : (
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left text-xs">
+                                  <thead>
+                                    <tr className="bg-rose-950 text-white text-[10px] uppercase tracking-wider">
+                                      <th className="py-2 px-2.5 font-bold w-24 text-center">Fecha</th>
+                                      <th className="py-2 px-2.5 font-bold">Concepto / Categoría</th>
+                                      <th className="py-2 px-2.5 font-bold">Detalle o Motivo</th>
+                                      <th className="py-2 px-2.5 font-bold">Proveedor / Recibo</th>
+                                      <th className="py-2 px-2.5 font-bold text-right">Monto Gasto</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-rose-100 dark:divide-rose-950">
+                                    {item.propExpenses.map((exp) => (
+                                      <tr key={exp.id} className="hover:bg-rose-50/30 transition">
+                                        <td className="py-2 px-2.5 text-center font-semibold text-slate-700 whitespace-nowrap">
+                                          {formatDate(exp.date)}
+                                        </td>
+                                        <td className="py-2 px-2.5 font-bold text-rose-950 dark:text-rose-200">
+                                          <span className="px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 text-[10px]">
+                                            {exp.category}
+                                          </span>
+                                        </td>
+                                        <td className="py-2 px-2.5 text-slate-800 dark:text-slate-200">
+                                          {exp.description}
+                                        </td>
+                                        <td className="py-2 px-2.5 text-slate-600 dark:text-slate-400 text-[11px]">
+                                          {exp.vendorOrPayee || '-'}
+                                          {exp.receiptNumber && ` (Doc #${exp.receiptNumber})`}
+                                        </td>
+                                        <td className="py-2 px-2.5 text-right font-black text-rose-600 whitespace-nowrap">
+                                          -{formatCurrency(exp.amount, companyAdmin.currencySymbol)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="bg-rose-50/80 dark:bg-rose-950/80 font-black text-xs text-rose-900 dark:text-rose-200 border-t-2 border-rose-200">
+                                      <td colSpan={4} className="py-2 px-2.5 text-right uppercase">
+                                        Total Gastos Operativos Propiedad:
+                                      </td>
+                                      <td className="py-2 px-2.5 text-right text-rose-700 font-black whitespace-nowrap">
+                                        {formatCurrency(item.totalPropExpenses, companyAdmin.currencySymbol)}
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </>
                     )}
 
-                    {/* Resumen de Totales Acumulados por Concepto Separado */}
-                    <div className="bg-slate-900 text-white p-3 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-                      <div className="flex flex-wrap items-center gap-4 text-[11px]">
-                        <div>
-                          <span className="text-slate-400 block text-[10px]">Renta + Moras Acumuladas:</span>
-                          <strong className="text-white font-bold">
-                            {formatCurrency(item.totalAccumulatedRentAndFees, companyAdmin.currencySymbol)}
-                          </strong>
-                        </div>
-                        <div className="h-6 w-px bg-slate-700 hidden sm:block" />
-                        <div>
-                          <span className="text-sky-300 block text-[10px]">Total Utilidades Acumuladas:</span>
-                          <strong className="text-sky-200 font-bold">
-                            {formatCurrency(item.totalAccumulatedUtilities, companyAdmin.currencySymbol)}
-                          </strong>
-                          <span className="text-[9px] text-slate-400 block">
-                            (Agua: {formatCurrency(status.pendingWaterBalance, companyAdmin.currencySymbol)} • Luz: {formatCurrency(status.pendingElectricBalance, companyAdmin.currencySymbol)} • Cuota: {formatCurrency(status.pendingMaintenanceBalance, companyAdmin.currencySymbol)})
-                          </span>
+                    {/* Resumen de Totales: Cuentas por Cobrar vs Flujo Ingresos vs Gastos */}
+                    <div className="bg-slate-900 text-white p-3.5 rounded-xl flex flex-col md:flex-row items-stretch justify-between gap-4 text-xs">
+                      {/* Bloque 1: Cuentas por Cobrar al Inquilino */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block">
+                          Balances Pendientes del Inquilino (Cuentas por Cobrar)
+                        </span>
+                        <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                          <div>
+                            <span className="text-slate-400 block text-[10px]">Renta & Moras:</span>
+                            <strong className="text-white">
+                              {formatCurrency(item.totalAccumulatedRentAndFees, companyAdmin.currencySymbol)}
+                            </strong>
+                          </div>
+                          <div className="h-5 w-px bg-slate-700" />
+                          <div>
+                            <span className="text-sky-300 block text-[10px]">Utilidades Pendientes:</span>
+                            <strong className="text-sky-200">
+                              {formatCurrency(item.totalAccumulatedUtilities, companyAdmin.currencySymbol)}
+                            </strong>
+                          </div>
+                          <div className="h-5 w-px bg-slate-700" />
+                          <div className="bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700">
+                            <span className="text-[10px] text-amber-300 block font-bold uppercase">Saldo Inquilino</span>
+                            <strong className="text-amber-200 font-black text-xs">
+                              {formatCurrency(item.totalPropertyPending, companyAdmin.currencySymbol)}
+                            </strong>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="text-right shrink-0 bg-slate-800 px-3.5 py-1.5 rounded-lg border border-slate-700">
-                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Saldo Total Propiedad</span>
-                        <span className="text-base font-black text-emerald-400">
-                          {formatCurrency(item.totalPropertyPending, companyAdmin.currencySymbol)}
-                        </span>
-                      </div>
+                      {/* Bloque 2: Flujo Financiero Real de la Propiedad (Ingresos Cobrados vs Gastos Incurridos) */}
+                      {includeExpenses && (
+                        <div className="bg-slate-800/90 p-2.5 rounded-lg border border-slate-700 flex flex-wrap items-center gap-4 text-right">
+                          <div>
+                            <span className="text-[10px] text-emerald-400 block font-bold uppercase">Ingresos Cobrados:</span>
+                            <span className="font-black text-xs text-emerald-400">
+                              +{formatCurrency(showHistory ? item.historyData.totalCashIncome : item.totalPropIncome, companyAdmin.currencySymbol)}
+                            </span>
+                          </div>
+                          <div className="h-6 w-px bg-slate-700" />
+                          <div>
+                            <span className="text-[10px] text-rose-400 block font-bold uppercase">Gastos Incurridos:</span>
+                            <span className="font-black text-xs text-rose-400">
+                              -{formatCurrency(showHistory ? item.historyData.totalCashExpenses : item.totalPropExpenses, companyAdmin.currencySymbol)}
+                            </span>
+                          </div>
+                          <div className="h-6 w-px bg-slate-700" />
+                          <div className="bg-slate-900 px-3 py-1 rounded-md border border-slate-700">
+                            <span className="text-[10px] text-slate-300 block font-black uppercase">Balance Neto (Ingresos vs Gastos)</span>
+                            <span className={`font-black text-sm ${(showHistory ? item.historyData.netCashflowBalance : item.propNetCashflow) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {formatCurrency(showHistory ? item.historyData.netCashflowBalance : item.propNetCashflow, companyAdmin.currencySymbol)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -2628,35 +3291,63 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
 
         {/* Gran Total Consolidado al pie del informe */}
         <div className="pt-4 border-t-2 border-slate-800 space-y-4">
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-300 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-300 flex flex-col xl:flex-row items-stretch justify-between gap-4">
             <div>
               <h4 className="text-sm font-black text-slate-900 uppercase">
                 Gran Total Fiscalizado Consolidado
               </h4>
               <p className="text-xs text-slate-500">
-                Suma consolidada de todas las propiedades y empresas incluidas en este informe.
+                Suma consolidada de todas las propiedades y empresas incluidas en este informe contable.
               </p>
             </div>
 
-            <div className="flex items-center gap-6 text-right">
-              <div>
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Renta y Moras</span>
-                <span className="font-black text-sm text-slate-900">
+            <div className="flex flex-wrap items-center gap-3 text-right">
+              {/* Balances pendientes del inquilino */}
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                <span className="block text-[10px] uppercase font-bold text-slate-500">Renta y Moras Pendientes</span>
+                <span className="font-black text-xs text-slate-900">
                   {formatCurrency(summaryMetrics.totalRentPending + summaryMetrics.totalLateFees, primaryAdmin.currencySymbol)}
                 </span>
               </div>
-              <div>
-                <span className="block text-[10px] uppercase font-bold text-slate-500">Total Utilidades</span>
-                <span className="font-black text-sm text-sky-800">
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                <span className="block text-[10px] uppercase font-bold text-slate-500">Utilidades Pendientes</span>
+                <span className="font-black text-xs text-sky-800">
                   {formatCurrency(summaryMetrics.totalWaterPending + summaryMetrics.totalElectricPending + summaryMetrics.totalMaintenancePending, primaryAdmin.currencySymbol)}
                 </span>
               </div>
-              <div className="bg-slate-900 text-white px-4 py-2 rounded-xl shadow-md">
-                <span className="block text-[10px] uppercase font-bold text-sky-300">Total a Cobrar</span>
-                <span className="font-black text-lg text-emerald-400">
+              <div className="bg-slate-900 text-white px-3.5 py-2 rounded-xl shadow-xs">
+                <span className="block text-[10px] uppercase font-bold text-amber-300">Total por Cobrar Inquilino</span>
+                <span className="font-black text-sm text-emerald-400">
                   {formatCurrency(summaryMetrics.grandTotalPending, primaryAdmin.currencySymbol)}
                 </span>
               </div>
+
+              {/* Conciliación Financiera (Cobrado Realmente vs Gastado) */}
+              {includeExpenses && (
+                <>
+                  <div className="bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl text-emerald-950 shadow-2xs">
+                    <span className="block text-[10px] uppercase font-bold text-emerald-700">Ingresos Cobrados</span>
+                    <span className="font-black text-xs text-emerald-700">
+                      +{formatCurrency(summaryMetrics.totalIncomeReceived, primaryAdmin.currencySymbol)}
+                    </span>
+                  </div>
+                  <div className="bg-rose-50 border border-rose-200 px-3 py-2 rounded-xl text-rose-950 shadow-2xs">
+                    <span className="block text-[10px] uppercase font-bold text-rose-700">Gastos Incurridos</span>
+                    <span className="font-black text-xs text-rose-700">
+                      -{formatCurrency(summaryMetrics.totalExpenses, primaryAdmin.currencySymbol)}
+                    </span>
+                  </div>
+                  <div className={`px-4 py-2 rounded-xl text-white shadow-md ${summaryMetrics.netOperationalBalance >= 0 ? 'bg-emerald-800' : 'bg-rose-800'}`}>
+                    <span className="block text-[10px] uppercase font-black text-white/90">Balance Diferencial Neto</span>
+                    <span className="font-black text-base text-white">
+                      {formatCurrency(summaryMetrics.netOperationalBalance, primaryAdmin.currencySymbol)}
+                    </span>
+                    <span className="block text-[9px] text-white/80">
+                      {summaryMetrics.netOperationalBalance >= 0 ? 'Superávit Operativo' : 'Déficit Operativo'}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

@@ -17,6 +17,8 @@ import {
   Clock,
   Sparkles,
   HelpCircle,
+  AlertTriangle,
+  Download,
 } from 'lucide-react';
 import { googleSignIn } from '../utils/firebaseAuth';
 import { validateUserAccessEmail } from '../utils/sessionLock';
@@ -25,10 +27,16 @@ import { LandlordProfile, Administrator } from '../types';
 import { SupportedLanguage } from '../utils/i18n';
 import { isLifetimeVip } from '../utils/subscription';
 
+export interface LogoutNoticeData {
+  type: 'gdrive_success' | 'local_success' | 'fallback_warning' | 'none';
+  fileName?: string;
+}
+
 interface SessionLockScreenProps {
   profile: LandlordProfile;
   administrators: Administrator[];
   currentLang?: SupportedLanguage;
+  logoutNotice?: LogoutNoticeData | null;
   onUnlockSuccess: (authenticatedEmail?: string) => void;
   onResetForNewUser?: () => void;
   onDataRestored?: () => void;
@@ -38,6 +46,7 @@ export const SessionLockScreen: React.FC<SessionLockScreenProps> = ({
   profile,
   administrators,
   currentLang = 'es',
+  logoutNotice,
   onUnlockSuccess,
   onResetForNewUser,
   onDataRestored,
@@ -222,6 +231,57 @@ export const SessionLockScreen: React.FC<SessionLockScreenProps> = ({
           <div className="p-3.5 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-xs text-emerald-300 font-medium flex items-start gap-2.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <span>{successNotice}</span>
+          </div>
+        )}
+
+        {/* Informative Notice upon Lock (e.g. Local Fallback, Drive sync, or Local download) */}
+        {logoutNotice?.type === 'fallback_warning' && (
+          <div className="p-4 bg-amber-500/15 border border-amber-500/40 rounded-2xl text-xs space-y-2 text-amber-200">
+            <div className="flex items-center gap-2 font-bold text-amber-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+              <span>{isEn ? 'Notice: Backup Saved to Your Device' : 'Aviso: Respaldo Guardado en tu Dispositivo'}</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-300">
+              {isEn
+                ? 'Google Drive was blocked by the browser or could not authenticate. To ensure your financial records are 100% safe, your backup was automatically downloaded as:'
+                : 'Google Drive no estuvo disponible o la ventana emergente fue bloqueada por el navegador. Para garantizar que no pierdas ningún dato, se descargó automáticamente el archivo:'}
+            </p>
+            <div className="font-mono text-[10px] bg-slate-950/70 p-2.5 rounded-xl text-amber-300 border border-amber-500/30 break-all select-all flex items-center justify-between gap-2">
+              <span className="font-bold">{logoutNotice.fileName || 'arriendos-respaldo-seguridad.json'}</span>
+              <span className="text-[9px] uppercase px-2 py-0.5 bg-amber-500/25 rounded-md font-sans text-amber-300 font-bold shrink-0">
+                {isEn ? 'Downloads folder' : 'Carpeta Descargas'}
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400">
+              {isEn
+                ? 'Location: Your phone or computer Downloads folder. You can restore it anytime using the "Restore Database from File (.JSON)" option below.'
+                : 'Ubicación: Carpeta de Descargas de este celular o computadora. Puedes restaurarlo cuando gustes usando el botón de abajo "Restaurar Base de Datos desde Archivo (.JSON)".'}
+            </p>
+          </div>
+        )}
+
+        {logoutNotice?.type === 'local_success' && (
+          <div className="p-3.5 bg-sky-500/15 border border-sky-500/30 rounded-2xl text-xs text-sky-200 space-y-1">
+            <div className="flex items-center gap-2 font-bold text-sky-300">
+              <Download className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>{isEn ? 'Local Backup Downloaded' : 'Copia Local Guardada'}</span>
+            </div>
+            <p className="text-[11px] text-slate-300">
+              {isEn
+                ? `Archivo descargado en la carpeta de Descargas de este dispositivo: ${logoutNotice.fileName || 'arriendos-respaldo.json'}`
+                : `Archivo descargado en la carpeta de Descargas de este equipo: ${logoutNotice.fileName || 'arriendos-respaldo.json'}`}
+            </p>
+          </div>
+        )}
+
+        {logoutNotice?.type === 'gdrive_success' && (
+          <div className="p-3.5 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-xs text-emerald-200 flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>
+              {isEn
+                ? '✓ Fresh backup successfully synchronized to your Google Drive.'
+                : '✓ Respaldo sincronizado exitosamente en tu Google Drive.'}
+            </span>
           </div>
         )}
 

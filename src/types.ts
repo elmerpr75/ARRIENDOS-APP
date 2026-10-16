@@ -115,6 +115,19 @@ export interface Payment {
   applicationFootnote?: string; // Nota al calce obligatoria de aplicación de fondos
 }
 
+export interface Expense {
+  id: string;
+  propertyId: string;
+  amount: number;
+  date: string; // "YYYY-MM-DD"
+  category: string; // Categoría del gasto (ej: Mantenimiento, Plomería, Impuestos, etc.)
+  description: string; // Detalle o motivo del gasto
+  vendorOrPayee?: string; // Proveedor, contratista o beneficiario del pago
+  receiptNumber?: string; // Factura o recibo de compra
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface NotificationSettings {
   enabled: boolean;
   daysBeforeRentDue: number; // Cantidad de días antes del 1er día de renta/mes para recordar enviar factura (default: 5)

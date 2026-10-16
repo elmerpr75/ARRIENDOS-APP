@@ -1,8 +1,10 @@
-import { Property, Payment, LandlordProfile, Administrator } from '../types';
+import { Property, Payment, LandlordProfile, Administrator, Expense } from '../types';
 
 const STORAGE_KEYS = {
   PROPERTIES: 'gestor_arrendamientos_properties_v1',
   PAYMENTS: 'gestor_arrendamientos_payments_v1',
+  EXPENSES: 'gestor_arrendamientos_expenses_v1',
+  EXPENSE_CATEGORIES: 'gestor_arrendamientos_expense_categories_v1',
   PROFILE: 'gestor_arrendamientos_profile_v1',
   ADMINISTRATORS: 'gestor_arrendamientos_administrators_v1',
 };
@@ -351,14 +353,71 @@ export function saveLandlordProfile(profile: LandlordProfile): void {
   }
 }
 
+export const DEFAULT_EXPENSE_CATEGORIES: string[] = [
+  'Mantenimiento & Reparación',
+  'Plomería & Fontanería',
+  'Electricidad & Iluminación',
+  'Pintura & Cerrajería',
+  'Impuestos & Contribuciones (CRIM/IRS)',
+  'Seguros (Póliza Hazard)',
+  'Servicios Legales & Contables',
+  'Suministros & Materiales',
+  'Comisión & Administración',
+  'Otros Gastos Operativos',
+];
+
+export function loadExpenses(): Expense[] {
+  try {
+    const data = safeGetItem(STORAGE_KEYS.EXPENSES);
+    if (data) {
+      const parsed: Expense[] = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.error('Error loading expenses:', e);
+  }
+  return [];
+}
+
+export function saveExpenses(expenses: Expense[]): void {
+  try {
+    safeSetItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+  } catch (e) {
+    console.error('Error saving expenses:', e);
+  }
+}
+
+export function loadExpenseCategories(): string[] {
+  try {
+    const data = safeGetItem(STORAGE_KEYS.EXPENSE_CATEGORIES);
+    if (data) {
+      const parsed: string[] = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.error('Error loading expense categories:', e);
+  }
+  return DEFAULT_EXPENSE_CATEGORIES;
+}
+
+export function saveExpenseCategories(categories: string[]): void {
+  try {
+    safeSetItem(STORAGE_KEYS.EXPENSE_CATEGORIES, JSON.stringify(categories));
+  } catch (e) {
+    console.error('Error saving expense categories:', e);
+  }
+}
+
 export function exportAppData(): string {
   const administrators = loadAdministrators();
   const profile = loadLandlordProfile();
   const data = {
-    version: '2.0',
+    version: '2.1',
     exportDate: new Date().toISOString(),
     properties: loadProperties(),
     payments: loadPayments(),
+    expenses: loadExpenses(),
+    expenseCategories: loadExpenseCategories(),
     profile: {
       ...profile,
       administrators,
@@ -372,6 +431,7 @@ export interface ImportDataResult {
   success: boolean;
   propertiesCount: number;
   paymentsCount: number;
+  expensesCount?: number;
   hasProfile: boolean;
   administratorsCount?: number;
   error?: string;
@@ -453,11 +513,32 @@ export function importAppData(jsonString: string): ImportDataResult {
       importedPaymentsCount = candidatePayments.length;
     }
 
-    if (importedPropsCount === 0 && importedPaymentsCount === 0 && !hasProfile && importedAdminsCount === 0) {
+    // Check expenses
+    let importedExpensesCount = 0;
+    const candidateExpenses = parsed.expenses || parsed.data?.expenses;
+    if (candidateExpenses && Array.isArray(candidateExpenses)) {
+      saveExpenses(candidateExpenses);
+      importedExpensesCount = candidateExpenses.length;
+    }
+
+    // Check expense categories
+    const candidateCategories = parsed.expenseCategories || parsed.data?.expenseCategories;
+    if (candidateCategories && Array.isArray(candidateCategories) && candidateCategories.length > 0) {
+      saveExpenseCategories(candidateCategories);
+    }
+
+    if (
+      importedPropsCount === 0 &&
+      importedPaymentsCount === 0 &&
+      importedExpensesCount === 0 &&
+      !hasProfile &&
+      importedAdminsCount === 0
+    ) {
       return {
         success: false,
         propertiesCount: 0,
         paymentsCount: 0,
+        expensesCount: 0,
         hasProfile: false,
         error: 'El archivo JSON no contiene secciones de propiedades ni pagos reconocibles.',
       };
@@ -467,6 +548,7 @@ export function importAppData(jsonString: string): ImportDataResult {
       success: true,
       propertiesCount: importedPropsCount,
       paymentsCount: importedPaymentsCount,
+      expensesCount: importedExpensesCount,
       hasProfile,
       administratorsCount: importedAdminsCount,
     };

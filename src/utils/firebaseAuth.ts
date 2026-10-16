@@ -23,9 +23,8 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Request Google Drive scopes
+// Request Google Drive app file scopes (approved, non-restricted)
 provider.addScope('https://www.googleapis.com/auth/drive.file');
-provider.addScope('https://www.googleapis.com/auth/drive');
 provider.setCustomParameters({
   prompt: 'select_account',
 });
@@ -133,6 +132,13 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       (typeof error?.message === 'string' && error.message.includes('popup-closed-by-user'))
     ) {
       return null;
+    }
+    if (error?.code === 'auth/popup-blocked' || (typeof error?.message === 'string' && error.message.includes('popup-blocked'))) {
+      throw new Error('El navegador bloqueó la ventana emergente de Google. Permite ventanas emergentes para este sitio o usa la descarga local .JSON.');
+    }
+    if (error?.code === 'auth/unauthorized-domain' || (typeof error?.message === 'string' && error.message.includes('unauthorized-domain'))) {
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+      throw new Error(`Dominio (${hostname}) pendiente de autorización en Firebase Auth. Puedes salir con respaldo local .JSON sin problemas.`);
     }
     console.warn('Sign in info:', error?.message || error);
     throw error;

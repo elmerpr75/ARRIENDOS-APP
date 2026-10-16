@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Property, Payment, PropertyFinancialStatus, Administrator } from '../types';
+import { Property, Payment, PropertyFinancialStatus, Administrator, Expense } from '../types';
 import { calculatePropertyStatus, formatCurrency, formatDate } from '../utils/calculations';
 import { getAdministratorForProperty } from '../utils/storage';
 import {
@@ -24,17 +24,20 @@ import {
   Receipt,
   Save,
   ShieldAlert,
+  TrendingDown,
 } from 'lucide-react';
 
 interface PropertiesListViewProps {
   properties: Property[];
   payments: Payment[];
+  expenses?: Expense[];
   administrators?: Administrator[];
   onAddProperty: () => void;
   onEditProperty: (property: Property) => void;
   onDeleteProperty: (propertyId: string) => void;
   onOpenInvoice: (status: PropertyFinancialStatus, mode?: 'current' | 'next_month') => void;
   onRegisterPayment: (propertyId: string, payerName: string, amount: number) => void;
+  onOpenExpenses?: (property: Property) => void;
   onEditPayment?: (payment: Payment) => void;
   onUpdatePropertyAdministrator?: (propertyId: string, administratorId: string) => void;
   onUpdatePropertyUtilities?: (
@@ -50,12 +53,14 @@ interface PropertiesListViewProps {
 export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
   properties,
   payments,
+  expenses = [],
   administrators = [],
   onAddProperty,
   onEditProperty,
   onDeleteProperty,
   onOpenInvoice,
   onRegisterPayment,
+  onOpenExpenses,
   onEditPayment,
   onUpdatePropertyAdministrator,
   onUpdatePropertyUtilities,
@@ -775,6 +780,24 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                         </span>
                       </div>
                     </div>
+
+                    {/* Operational Expenses summary if recorded */}
+                    {(() => {
+                      const propExps = expenses.filter((e) => e.propertyId === property.id);
+                      if (propExps.length === 0) return null;
+                      const sumExp = propExps.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+                      return (
+                        <div className="bg-rose-50/80 dark:bg-rose-950/40 p-2 rounded-lg border border-rose-200 dark:border-rose-900/60 flex items-center justify-between text-[11px] pt-1">
+                          <span className="text-rose-800 dark:text-rose-300 font-semibold flex items-center gap-1">
+                            <TrendingDown className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                            <span>Gastos Operativos Registrados ({propExps.length}):</span>
+                          </span>
+                          <span className="font-black text-rose-700 dark:text-rose-300">
+                            {formatCurrency(sumExp, admin.currencySymbol)}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -825,6 +848,24 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                     >
                       <DollarSign className="w-3.5 h-3.5" /> + Pago
                     </button>
+
+                    {/* Botón de Gastos de la Propiedad */}
+                    {onOpenExpenses && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenExpenses(property)}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-semibold flex items-center gap-1.5 transition shadow-xs cursor-pointer text-xs"
+                        title="Registrar y consultar gastos de mantenimiento, reparaciones u operación para esta propiedad"
+                      >
+                        <TrendingDown className="w-3.5 h-3.5" />
+                        <span>Gastos</span>
+                        {expenses.filter((e) => e.propertyId === property.id).length > 0 && (
+                          <span className="ml-0.5 px-1.5 py-0.2 bg-white/25 text-white rounded-full text-[10px] font-black">
+                            {expenses.filter((e) => e.propertyId === property.id).length}
+                          </span>
+                        )}
+                      </button>
+                    )}
 
                     {/* Button to view independent payment receipts */}
                     {payments.some((p) => p.propertyId === property.id) && (

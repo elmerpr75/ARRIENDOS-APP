@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { SupportedLanguage } from '../utils/i18n';
 
+import { hasValidAccessToken } from '../utils/firebaseAuth';
+
 interface LogoutConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -33,7 +35,10 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
   userEmail,
   currentLang = 'es',
 }) => {
-  const [selectedAction, setSelectedAction] = useState<'gdrive' | 'local' | 'none'>('gdrive');
+  const hasActiveGoogleToken = hasValidAccessToken();
+  const [selectedAction, setSelectedAction] = useState<'gdrive' | 'local' | 'none'>(() =>
+    hasActiveGoogleToken ? 'gdrive' : 'local'
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -48,14 +53,19 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
       await onConfirmLogout(choice);
     } catch (err: any) {
       console.error('Logout / backup error:', err);
-      setErrorMessage(err?.message || (isEn ? 'Failed to complete logout.' : 'No se pudo completar el proceso de salida.'));
+      setErrorMessage(
+        err?.message ||
+          (isEn
+            ? 'Could not connect to Google Drive or sign out.'
+            : 'No se pudo completar el respaldo en Google Drive.')
+      );
       setIsProcessing(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 sm:p-7 space-y-6 my-auto text-slate-900 dark:text-slate-100 relative">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden p-6 sm:p-7 space-y-5 my-auto text-slate-900 dark:text-slate-100 relative">
         
         {/* Close button */}
         {!isProcessing && (
@@ -95,14 +105,37 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
             </span>{' '}
             {isEn
               ? 'Creating a backup (JSON) ensures your latest payments and edits are safe before locking access.'
-              : 'Realizar una copia de seguridad (JSON) te asegura tener a salvo los últimos cobros, contratos y modificaciones antes de bloquear la pantalla.'}
+              : 'Realizar una copia de seguridad te asegura tener a salvo tus cobros, inquilinos y contratos antes de bloquear la pantalla.'}
           </div>
         </div>
 
-        {/* Error notification if any */}
+        {/* Error notification if any with instant fallback buttons */}
         {errorMessage && (
-          <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl text-xs text-rose-700 dark:text-rose-300 font-medium">
-            {errorMessage}
+          <div className="p-4 bg-rose-500/15 border border-rose-500/40 rounded-2xl space-y-3">
+            <div className="text-xs text-rose-700 dark:text-rose-300 font-medium">
+              <span className="font-bold">{isEn ? 'Notice:' : 'Aviso:'} </span>
+              {errorMessage}
+            </div>
+            <div className="pt-1 flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => handleExecuteLogout('local')}
+                className="flex-1 px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isEn ? 'Download Local JSON & Exit' : 'Descargar JSON Local y Salir'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => handleExecuteLogout('none')}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium transition flex items-center justify-center gap-1.5 border border-slate-700 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                <span>{isEn ? 'Exit without Backup' : 'Salir sin Copia'}</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -131,20 +164,26 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
               <Cloud className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
                   {isEn ? 'Cloud Backup (Google Drive)' : 'Copia en la Nube (Google Drive)'}
                 </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                  {isEn ? 'Recommended' : 'Recomendado'}
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                  hasActiveGoogleToken
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                    : 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30'
+                }`}>
+                  {hasActiveGoogleToken
+                    ? (isEn ? 'Connected' : 'Conectado')
+                    : (isEn ? 'Requires Google' : 'Requiere Google')}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
                 {isEn
                   ? 'Syncs a fresh JSON copy to Drive and automatically prunes old backups.'
-                  : 'Sube un respaldo JSON a tu Google Drive y aplica la política automática de retención.'}
+                  : 'Sube un respaldo JSON a Google Drive y limpia automáticamente copias antiguas.'}
               </p>
-              {isGoogleDriveConnected && (
+              {hasActiveGoogleToken && (connectedGoogleEmail || userEmail) && (
                 <div className="flex items-center gap-1.5 mt-2 text-[10px] text-sky-600 dark:text-sky-300 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                   <span>{isEn ? 'Connected as:' : 'Conectado como:'} {connectedGoogleEmail || userEmail}</span>
@@ -172,13 +211,18 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
               <Download className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
-              <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
-                {isEn ? 'Download Local Backup (.JSON)' : 'Descargar Copia Local (.JSON)'}
-              </span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                  {isEn ? 'Download Local Backup (.JSON)' : 'Descargar Copia Local (.JSON)'}
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
+                  {isEn ? '100% Instant' : '100% Seguro & Rápido'}
+                </span>
+              </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
                 {isEn
-                  ? 'Instantly downloads a .json file to your phone, tablet, or PC downloads.'
-                  : 'Descarga un archivo .json directo a la memoria o descargas de este dispositivo.'}
+                  ? 'Instantly downloads a .json file directly to this phone, tablet, or PC without Google login.'
+                  : 'Descarga un archivo .json directo a la memoria o descargas de este celular o equipo (no requiere cuenta Google).'}
               </p>
             </div>
           </button>
