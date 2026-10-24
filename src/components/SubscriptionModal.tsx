@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Check,
@@ -46,6 +46,12 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen) {
+      setEmailInput(userEmail || '');
+    }
+  }, [isOpen, userEmail]);
+
   if (!isOpen) return null;
 
   const isEn = currentLanguage === 'en';
@@ -87,7 +93,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   const progressPercent = Math.min(100, Math.round((elapsedTrialDays / totalTrialDays) * 100));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
       <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 overflow-hidden my-auto max-h-[96vh] flex flex-col animate-fadeIn">
         {/* Header Modal */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
@@ -374,7 +380,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                   type="email"
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="tu-correo@gmail.com"
+                  placeholder={userEmail || (isEn ? 'your@email.com' : 'tu@email.com')}
                   className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
                 />
               </div>

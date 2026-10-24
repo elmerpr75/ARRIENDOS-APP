@@ -443,10 +443,10 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold">
-                Configuración de Empresas & Logo / Timbre
+                Configuración General & Empresas
               </h2>
               <p className="text-xs text-sky-200/80">
-                Administra hasta 7 empresas independientes con sus propios logos, cuentas bancarias y monedas
+                Tema visual, hasta 7 empresas con logotipos independientes, cuentas bancarias y respaldos
               </p>
             </div>
           </div>
@@ -574,7 +574,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
 
                 <div className="flex-1 space-y-1">
                   <p className="text-xs text-slate-600 dark:text-slate-300">
-                    Sube el logo de esta empresa para sus facturas, recibos y avisos de cobro.
+                    Sube el logotipo de esta empresa para sus facturas, recibos y avisos de cobro en PDF (el encabezado de la aplicación conserva el icono oficial de la app).
                   </p>
                   <input
                     type="file"

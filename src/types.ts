@@ -53,12 +53,22 @@ export interface Tenant {
   idNumber?: string; // DNI, Cédula, RFC, etc.
 }
 
+export type PropertyStatus = 'rentado' | 'vacante' | 'en_mantenimiento' | 'en_proceso_legal' | 'multifamiliar';
+
+export interface RentPeriod {
+  id: string;
+  amount: number;
+  effectiveDate: string; // "YYYY-MM-DD"
+}
+
 export interface Property {
   id: string;
   administratorId?: string; // ID of the assigned Administrator/Company
   propertyIdentifier: string; // Ej: "Apto 302 - Residencial Palmeras"
   address: string;
-  rentAmount: number; // Monto mensual de renta
+  status?: PropertyStatus; // Estatus de propiedad
+  rentAmount: number; // Monto mensual de renta base
+  rentPeriods?: RentPeriod[]; // Períodos de renta escalonada
   rentDueDay: number; // Día del mes en que vence la renta (1-31)
   graceDays: number; // Días de gracia antes de aplicar mora (default: 3)
   lateFeeBase: number; // Cargo base fijo por atraso

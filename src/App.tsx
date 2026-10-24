@@ -606,26 +606,17 @@ export default function App() {
       <header className="no-print sticky top-0 z-40 bg-slate-900 text-white border-b border-slate-800 shadow-sm w-full max-w-full overflow-x-clip">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-3 w-full">
           {/* Logo & Brand */}
+          {/* Logo oficial de la App (independiente de los logos de empresas usados en facturas y reportes) */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            {profile.logoUrl ? (
-              <img
-                src={profile.logoUrl}
-                alt="Logo Empresa"
-                className="w-8 h-8 sm:w-10 sm:h-10 object-contain rounded-xl bg-white p-0.5 shadow-xs border border-slate-700 shrink-0"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-sky-600 flex items-center justify-center text-white shadow-xs shrink-0">
-                <Building2 className="w-5 h-5 sm:w-6 sm:h-6" />
-              </div>
-            )}
+            <img
+              src="/icon.svg"
+              alt="Logo ARRIENDOS"
+              className="w-8 h-8 sm:w-10 sm:h-10 object-contain rounded-xl bg-white p-0.5 shadow-xs border border-slate-700 shrink-0"
+            />
 
             <div className="min-w-0">
               <h1 className="text-xs sm:text-base font-bold tracking-tight flex items-center gap-1 sm:gap-1.5 leading-tight truncate">
                 <span className="truncate">{t.appTitle}</span>
-                <span className="text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.2 bg-sky-500/20 text-sky-400 font-semibold rounded-md border border-sky-500/30 shrink-0">
-                  {t.androidWeb}
-                </span>
               </h1>
               <p className="text-[10px] sm:text-[11px] text-slate-400 hidden sm:block truncate max-w-xs sm:max-w-md">
                 {profile.companyName}
@@ -636,16 +627,6 @@ export default function App() {
           {/* Header Action Items */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <PWAInstallButton />
-
-            {/* Theme Selector (Claro / Oscuro / Equipo) - Desktop & Tablet */}
-            <div className="hidden sm:inline-flex">
-              <ThemeSelector
-                currentTheme={themeMode}
-                onThemeChange={handleThemeChange}
-                lang={currentLang}
-                variant="segmented"
-              />
-            </div>
 
             {/* Language Quick Switcher */}
             <button
@@ -724,25 +705,27 @@ export default function App() {
               <span>{totalAlerts}</span>
             </button>
 
-            {/* Company & Timbre Settings (Desktop & Tablet only - on mobile it is in bottom nav) */}
+            {/* Configuration Button (Icon-only on mobile, visible text on desktop) */}
             <button
               onClick={() => setIsProfileModalOpen(true)}
-              className="hidden md:flex p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition border border-slate-700 items-center gap-1 cursor-pointer"
-              title="Configuración de logotipo y datos fiscales"
+              className="p-1.5 sm:px-2.5 sm:py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1 cursor-pointer shadow-xs shrink-0"
+              title={currentLang === 'es' ? 'Configuración (Empresas, Logo, Tema y Datos)' : 'Configuration'}
+              aria-label={currentLang === 'es' ? 'Configuración' : 'Configuration'}
             >
-              <Settings className="w-4 h-4" />
-              <span>{t.logoTimbre}</span>
+              <Settings className="w-4 h-4 text-sky-400 shrink-0" />
+              <span className="hidden sm:inline">{t.logoTimbre}</span>
             </button>
 
-            {/* Logout / Exit App & Lock Session */}
+            {/* Logout / Exit App & Lock Session (Icon-only on mobile, visible text on desktop) */}
             <button
               type="button"
               onClick={() => setIsLogoutModalOpen(true)}
-              className="px-2.5 py-1.5 sm:p-2 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              className="p-1.5 sm:px-2.5 sm:py-1.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs shrink-0"
               title={currentLang === 'en' ? 'Sign out and protect access' : 'Cerrar sesión y proteger acceso'}
+              aria-label={currentLang === 'en' ? 'Sign out' : 'Cerrar sesión'}
             >
-              <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400 shrink-0" />
-              <span className="text-[11px] sm:text-xs">{currentLang === 'en' ? 'Exit' : 'Salir'}</span>
+              <LogOut className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="hidden sm:inline text-xs">{currentLang === 'en' ? 'Exit' : 'Salir'}</span>
             </button>
           </div>
         </div>
@@ -956,9 +939,10 @@ export default function App() {
         <button
           onClick={() => setIsProfileModalOpen(true)}
           className="shrink-0 min-w-[58px] flex flex-col items-center py-1 px-1.5 rounded-xl transition hover:text-slate-200 cursor-pointer"
+          title={t.logoTimbre}
         >
           <Settings className="w-5 h-5 mb-0.5 shrink-0" />
-          <span>{currentLang === 'es' ? 'Ajustes' : 'Config'}</span>
+          <span>{currentLang === 'es' ? 'Configuración' : 'Config'}</span>
         </button>
 
         <button
@@ -1039,11 +1023,9 @@ export default function App() {
         onThemeChange={handleThemeChange}
         subscriptionState={subscriptionState}
         onOpenSubscriptionModal={() => {
-          setIsProfileModalOpen(false);
           setIsSubscriptionModalOpen(true);
         }}
         onOpenGoogleDriveModal={() => {
-          setIsProfileModalOpen(false);
           setIsGoogleDriveModalOpen(true);
         }}
       />
@@ -1052,7 +1034,7 @@ export default function App() {
         isOpen={isGoogleDriveModalOpen}
         onClose={() => setIsGoogleDriveModalOpen(false)}
         folderIdOrUrl={profile.googleDriveFolderId || ''}
-        userEmail={authUserEmail || profile.googleDriveAccountEmail || profile.email}
+        userEmail={profile.email || authUserEmail || profile.googleDriveAccountEmail}
         currentLanguage={currentLang}
         onUpdateFolderId={(newFolderId) => {
           const updatedProfile = { ...profile, googleDriveFolderId: newFolderId };
@@ -1067,9 +1049,10 @@ export default function App() {
         onClose={() => setIsSubscriptionModalOpen(false)}
         subscriptionState={subscriptionState}
         userEmail={
+          profile.email ||
           authUserEmail ||
           profile.googleDriveAccountEmail ||
-          profile.email ||
+          administrators[0]?.email ||
           ''
         }
         onSubscriptionUpdated={handleSubscriptionUpdated}

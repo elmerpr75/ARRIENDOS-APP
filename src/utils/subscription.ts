@@ -24,7 +24,6 @@ import {
 export const LIFETIME_VIP_EMAILS: string[] = [
   'elmerpr@gmail.com',
   'fam.sanchez.y.flores@gmail.com',
-  'casainsulada@gmail.com',
   'carmensanchezpr2@gmail.com',
   'amnerys.miflosa@gmail.com',
 ];

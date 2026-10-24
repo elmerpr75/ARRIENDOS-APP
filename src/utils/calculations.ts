@@ -20,6 +20,28 @@ export function parseLocalDate(dateString?: string): Date {
   return isNaN(d.getTime()) ? new Date() : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
 
+export function getPropertyRentForDate(property: Property, evaluationDate: Date | string = new Date()): number {
+  const baseRent = Number(property.rentAmount) || 0;
+  if (!property.rentPeriods || property.rentPeriods.length === 0) {
+    return baseRent;
+  }
+  const evalTime = typeof evaluationDate === 'string' ? parseLocalDate(evaluationDate).getTime() : evaluationDate.getTime();
+  const sorted = [...property.rentPeriods].sort((a, b) => {
+    return parseLocalDate(a.effectiveDate).getTime() - parseLocalDate(b.effectiveDate).getTime();
+  });
+
+  let activeRent = baseRent;
+  for (const period of sorted) {
+    const periodTime = parseLocalDate(period.effectiveDate).getTime();
+    if (evalTime >= periodTime) {
+      activeRent = Number(period.amount) || baseRent;
+    } else {
+      break;
+    }
+  }
+  return activeRent;
+}
+
 export function getCurrencySymbol(codeOrSymbol?: string): string {
   if (!codeOrSymbol) return '$'; // US Dollar default
   const found = CURRENCY_OPTIONS.find(
@@ -275,9 +297,10 @@ export function calculatePropertyStatus(
   // Is within contractual grace period (e.g. days 15-20 when due day is 15 with 5 grace days)?
   const isWithinGrace = isRentDueReached && evalMidnight <= graceMidnightMs;
 
-  // Current month rent charge:
-  // ONLY billed/charged as active debt once the due day is reached or exceeded.
-  const currentMonthRentCharge = isRentDueReached ? property.rentAmount : 0;
+  const propStatus = property.status || 'rentado';
+  const isAccruingRentAndLateFees = propStatus === 'rentado' || propStatus === 'en_proceso_legal';
+  const currentActiveRent = isAccruingRentAndLateFees ? getPropertyRentForDate(property, refDateLocal) : 0;
+  const currentMonthRentCharge = isRentDueReached ? currentActiveRent : 0;
 
   // Utility charges for this property (kept strictly in separate accounts)
   const waterAmount = property.utilitiesWaterActive ? Math.max(0, Number(property.utilitiesWaterAmount) || 0) : 0;
@@ -385,7 +408,10 @@ export function calculatePropertyStatus(
         const totalMonthIndex = (startDay > dueDay ? startMonth + 1 : startMonth) + m;
         const pastYear = startYear + Math.floor(totalMonthIndex / 12);
         const pastMonth = totalMonthIndex % 12;
-        const monthlyRent = property.rentAmount;
+        const cycleDateForPast = new Date(pastYear, pastMonth, dueDay);
+        const pastPropStatus = property.status || 'rentado';
+        const pastIsAccruing = pastPropStatus === 'rentado' || pastPropStatus === 'en_proceso_legal';
+        const monthlyRent = pastIsAccruing ? getPropertyRentForDate(property, cycleDateForPast) : 0;
 
         if (remainingPriorRent >= monthlyRent) {
           remainingPriorRent -= monthlyRent;
@@ -394,14 +420,14 @@ export function calculatePropertyStatus(
           const unpaidPastRent = monthlyRent - remainingPriorRent;
           remainingPriorRent = 0;
           const pastMonthEnd = new Date(pastYear, pastMonth + 1, 0, 0, 0, 0, 0);
-          const pastLateResult = computeMonthlyLateFee(
+          const pastLateResult = pastIsAccruing ? computeMonthlyLateFee(
             property,
             dueDay,
             pastYear,
             pastMonth,
             pastMonthEnd,
             unpaidPastRent
-          );
+          ) : { totalLateFee: 0 };
           accumulatedPriorBilled += monthlyRent + pastLateResult.totalLateFee;
         }
       }
@@ -426,16 +452,16 @@ export function calculatePropertyStatus(
   // 2. We have EXCEEDED the contractual grace period (!isWithinGrace, evalMidnight > graceMidnightMs)
   // 3. The tenant does NOT have credit or zero balance: there is an actual remaining unpaid rent
   const pendingRentUnadjusted = isRentDueReached
-    ? Math.max(0, property.rentAmount + previousBalance - totalRentCoverageThisMonth)
-    : Math.max(0, previousBalance - (totalRentCoverageThisMonth > property.rentAmount ? totalRentCoverageThisMonth - property.rentAmount : 0));
+    ? Math.max(0, currentActiveRent + previousBalance - totalRentCoverageThisMonth)
+    : Math.max(0, previousBalance - (totalRentCoverageThisMonth > currentActiveRent ? totalRentCoverageThisMonth - currentActiveRent : 0));
 
   // If the tenant maintains zero balance or credit (priorRentCredit >= currentMonthRentCharge or totalRentCoverage >= charge),
   // NO LATE FEE CAN BE CHARGED!
   const hasZeroOrCreditBalance = isRentDueReached
-    ? totalRentCoverageThisMonth >= property.rentAmount && previousBalance === 0
+    ? totalRentCoverageThisMonth >= currentActiveRent && previousBalance === 0
     : previousBalance === 0;
 
-  const shouldComputeLateFees = isRentDueReached && !isWithinGrace && !hasZeroOrCreditBalance && pendingRentUnadjusted > 0;
+  const shouldComputeLateFees = isAccruingRentAndLateFees && isRentDueReached && !isWithinGrace && !hasZeroOrCreditBalance && pendingRentUnadjusted > 0;
 
   const currentLateFeeResult = shouldComputeLateFees
     ? computeMonthlyLateFee(
@@ -444,7 +470,7 @@ export function calculatePropertyStatus(
         currentYear,
         currentMonth,
         refDateLocal,
-        Math.min(property.rentAmount, pendingRentUnadjusted)
+        Math.min(currentActiveRent, pendingRentUnadjusted)
       )
     : {
         isOverdue: false,

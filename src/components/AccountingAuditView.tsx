@@ -6,6 +6,7 @@ import {
   formatDate,
   parseLocalDate,
   computeMonthlyLateFee,
+  getPropertyRentForDate,
 } from '../utils/calculations';
 import { getAdministratorForProperty } from '../utils/storage';
 import { downloadElementAsPdf, printElementSafely } from '../utils/pdfGenerator';
@@ -378,67 +379,72 @@ export function generatePropertyHistoricalData(
       const graceDate = new Date(cYear, cMonth, dueDay + graceDays, 23, 59, 59, 999);
       const graceDateStr = `${graceDate.getFullYear()}-${String(graceDate.getMonth() + 1).padStart(2, '0')}-${String(graceDate.getDate()).padStart(2, '0')}`;
 
-      // Only accrue contractual obligation if due date has arrived (due date <= evaluation cutoff refTime)
       if (dueDate.getTime() <= refTime) {
-        accumulatedObligationsSoFar += property.rentAmount;
+        const histPropStatus = property.status || 'rentado';
+        const histIsAccruing = histPropStatus === 'rentado' || histPropStatus === 'en_proceso_legal';
+        const cycleRent = histIsAccruing ? getPropertyRentForDate(property, dueDate) : 0;
 
-        rentEntries.push({
-          id: `rent-obl-${cYear}-${cMonth}`,
-          date: dueDateStr,
-          conceptType: 'renta',
-          conceptName: 'Renta Contractual',
-          transactionTitle: `Obligación contractual de Renta (${periodNameCap})`,
-          obligationAmount: property.rentAmount,
-          contractualDueDate: dueDateStr,
-          paymentAmount: null,
-          paymentDate: null,
-          runningBalance: 0,
-          notes: `Vencimiento contractual: ${formatDate(dueDateStr)}. Período de gracia: ${graceDays} días sin recargos (hasta ${formatDate(graceDateStr)}).`,
-          isPayment: false,
-          isLateFee: false,
-        });
+        if (cycleRent > 0) {
+          accumulatedObligationsSoFar += cycleRent;
 
-        // Evaluate whether late fee applies for this cycle:
-        // We verify the tenant's cumulative rent balance at the grace deadline (graceDate).
-        // Total rent paid by tenant on or before grace date (includes all prior advance payments + payments during grace):
-        const rentPaidOnOrBeforeGrace = rentPaymentsList
-          .filter((item) => parseLocalDate(item.date).getTime() <= graceDate.getTime())
-          .reduce((sum, item) => sum + item.rentAmt, 0);
+          rentEntries.push({
+            id: `rent-obl-${cYear}-${cMonth}`,
+            date: dueDateStr,
+            conceptType: 'renta',
+            conceptName: 'Renta Contractual',
+            transactionTitle: `Obligación contractual de Renta (${periodNameCap})`,
+            obligationAmount: cycleRent,
+            contractualDueDate: dueDateStr,
+            paymentAmount: null,
+            paymentDate: null,
+            runningBalance: 0,
+            notes: `Vencimiento contractual: ${formatDate(dueDateStr)}. Período de gracia: ${graceDays} días sin recargos (hasta ${formatDate(graceDateStr)}).`,
+            isPayment: false,
+            isLateFee: false,
+          });
 
-        const netBalanceAtGrace = accumulatedObligationsSoFar - rentPaidOnOrBeforeGrace;
+          // Evaluate whether late fee applies for this cycle:
+          // We verify the tenant's cumulative rent balance at the grace deadline (graceDate).
+          // Total rent paid by tenant on or before grace date (includes all prior advance payments + payments during grace):
+          const rentPaidOnOrBeforeGrace = rentPaymentsList
+            .filter((item) => parseLocalDate(item.date).getTime() <= graceDate.getTime())
+            .reduce((sum, item) => sum + item.rentAmt, 0);
 
-        // CRITICAL: If the tenant maintains credit or zero balance (netBalanceAtGrace <= 0),
-        // NO LATE FEES CAN BE COMPUTED OR CHARGED!
-        if (netBalanceAtGrace > 0 && refTime > graceDate.getTime()) {
-          const unpaidRent = Math.min(property.rentAmount, netBalanceAtGrace);
-          const lateResult = computeMonthlyLateFee(
-            property,
-            dueDay,
-            cYear,
-            cMonth,
-            targetEnd,
-            unpaidRent
-          );
+          const netBalanceAtGrace = accumulatedObligationsSoFar - rentPaidOnOrBeforeGrace;
 
-          if (lateResult.totalLateFee > 0) {
-            const dayAfterGrace = new Date(cYear, cMonth, dueDay + graceDays + 1, 0, 0, 0, 0);
-            const dayAfterGraceStr = `${dayAfterGrace.getFullYear()}-${String(dayAfterGrace.getMonth() + 1).padStart(2, '0')}-${String(dayAfterGrace.getDate()).padStart(2, '0')}`;
+          // CRITICAL: If the tenant maintains credit or zero balance (netBalanceAtGrace <= 0),
+          // NO LATE FEES CAN BE COMPUTED OR CHARGED!
+          if (netBalanceAtGrace > 0 && refTime > graceDate.getTime()) {
+            const unpaidRent = Math.min(cycleRent, netBalanceAtGrace);
+            const lateResult = computeMonthlyLateFee(
+              property,
+              dueDay,
+              cYear,
+              cMonth,
+              targetEnd,
+              unpaidRent
+            );
 
-            rentEntries.push({
-              id: `mora-charge-${cYear}-${cMonth}`,
-              date: dayAfterGraceStr,
-              conceptType: 'mora',
-              conceptName: 'Recargos por Demora',
-              transactionTitle: `Cargo por Demora en Pago de Renta (${periodNameCap})`,
-              obligationAmount: lateResult.totalLateFee,
-              contractualDueDate: graceDateStr,
-              paymentAmount: null,
-              paymentDate: null,
-              runningBalance: 0,
-              notes: `Excedida ventana de gracia de ${graceDays} días sin liquidar saldo pendiente (${formatCurrency(unpaidRent, companyAdmin.currencySymbol)}). Cargo base: ${formatCurrency(lateResult.lateFeeBase, companyAdmin.currencySymbol)} + Demora diaria: ${lateResult.effectiveDailyDays}d × ${formatCurrency(property.lateFeeDaily, companyAdmin.currencySymbol)}/día = ${formatCurrency(lateResult.lateFeeDaily, companyAdmin.currencySymbol)}.${lateResult.cappedNotice ? ` ${lateResult.cappedNotice}` : ''}`,
-              isPayment: false,
-              isLateFee: true,
-            });
+            if (lateResult.totalLateFee > 0) {
+              const dayAfterGrace = new Date(cYear, cMonth, dueDay + graceDays + 1, 0, 0, 0, 0);
+              const dayAfterGraceStr = `${dayAfterGrace.getFullYear()}-${String(dayAfterGrace.getMonth() + 1).padStart(2, '0')}-${String(dayAfterGrace.getDate()).padStart(2, '0')}`;
+
+              rentEntries.push({
+                id: `mora-charge-${cYear}-${cMonth}`,
+                date: dayAfterGraceStr,
+                conceptType: 'mora',
+                conceptName: 'Recargos por Demora',
+                transactionTitle: `Cargo por Demora en Pago de Renta (${periodNameCap})`,
+                obligationAmount: lateResult.totalLateFee,
+                contractualDueDate: graceDateStr,
+                paymentAmount: null,
+                paymentDate: null,
+                runningBalance: 0,
+                notes: `Excedida ventana de gracia de ${graceDays} días sin liquidar saldo pendiente (${formatCurrency(unpaidRent, companyAdmin.currencySymbol)}). Cargo base: ${formatCurrency(lateResult.lateFeeBase, companyAdmin.currencySymbol)} + Demora diaria: ${lateResult.effectiveDailyDays}d × ${formatCurrency(property.lateFeeDaily, companyAdmin.currencySymbol)}/día = ${formatCurrency(lateResult.lateFeeDaily, companyAdmin.currencySymbol)}.${lateResult.cappedNotice ? ` ${lateResult.cappedNotice}` : ''}`,
+                isPayment: false,
+                isLateFee: true,
+              });
+            }
           }
         }
       }
@@ -1487,10 +1493,38 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
   // Primary administrator for report header
   const primaryAdmin = useMemo(() => {
     if (selectedAdminId !== 'all') {
-      return administrators.find((a) => a.id === selectedAdminId) || administrators[0];
+      const found = administrators.find((a) => a.id === selectedAdminId);
+      if (found) return found;
     }
-    return administrators[0];
-  }, [administrators, selectedAdminId]);
+    const def = administrators.find((a) => a.isDefault);
+    return def || administrators[0] || {
+      id: 'admin-1',
+      companyName: profile?.companyName || 'Inmobiliaria Premier',
+      landlordName: profile?.landlordName || 'Administrador',
+      taxId: profile?.taxId || '',
+      phone: profile?.phone || '',
+      email: profile?.email || '',
+      address: profile?.address || '',
+      logoUrl: profile?.logoUrl,
+      bankDetails: profile?.bankDetails || '',
+      invoiceNote: profile?.invoiceNote || '',
+      currencyCode: profile?.currencyCode || 'USD',
+      currencySymbol: profile?.currencySymbol || '$',
+      isDefault: true,
+    };
+  }, [administrators, selectedAdminId, profile]);
+
+  const currentHeaderLogo = useMemo(() => {
+    if (selectedAdminId !== 'all') {
+      const selected = administrators.find((a) => a.id === selectedAdminId);
+      return selected?.logoUrl || (selected?.isDefault ? profile?.logoUrl : undefined) || profile?.logoUrl;
+    }
+    return (
+      primaryAdmin?.logoUrl ||
+      profile?.logoUrl ||
+      administrators.find((a) => a.logoUrl)?.logoUrl
+    );
+  }, [selectedAdminId, administrators, primaryAdmin, profile?.logoUrl]);
 
   // Handlers for printing and downloading PDF
   const handlePrintLedger = () => {
@@ -1579,6 +1613,68 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Selector Visual de Empresas con Logo (Idéntico a Cobranza y Reportes) */}
+        {administrators.length > 1 && (
+          <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-sky-500" />
+                Segregar Libro por Empresa Administradora
+              </span>
+              <span className="text-[11px] text-slate-400 font-semibold">
+                {administrators.length} empresas registradas
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+              <button
+                type="button"
+                onClick={() => setSelectedAdminId('all')}
+                className={`px-3 py-1.5 rounded-xl font-bold transition shrink-0 cursor-pointer flex items-center gap-2 ${
+                  selectedAdminId === 'all'
+                    ? 'bg-sky-600 text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Todas las Empresas ({properties.length} prop.)</span>
+              </button>
+
+              {administrators.map((admin) => {
+                const logo = admin.logoUrl || (admin.isDefault ? profile?.logoUrl : undefined);
+                const pCount = properties.filter((p) => (p.administratorId || administrators[0]?.id) === admin.id).length;
+                return (
+                  <button
+                    key={admin.id}
+                    type="button"
+                    onClick={() => setSelectedAdminId(admin.id)}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition shrink-0 cursor-pointer flex items-center gap-2 border ${
+                      selectedAdminId === admin.id
+                        ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    {logo ? (
+                      <img
+                        src={logo}
+                        alt=""
+                        className="w-4 h-4 rounded-full object-contain bg-white shrink-0"
+                      />
+                    ) : (
+                      <Building2 className="w-3.5 h-3.5" />
+                    )}
+                    <span>{admin.companyName}</span>
+                    <span className="px-1.5 py-0.2 bg-white/20 dark:bg-slate-700 rounded text-[10px] font-black">
+                      {admin.currencySymbol}
+                    </span>
+                    <span className="text-[10px] opacity-75">({pCount})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Filters and Selectors */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-1">
@@ -2075,14 +2171,15 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
         {/* Letterhead & Timbre Fiscal */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b-2 border-slate-800">
           <div className="flex items-center gap-3">
-            {primaryAdmin.logoUrl ? (
+            {currentHeaderLogo ? (
               <img
-                src={primaryAdmin.logoUrl}
+                src={currentHeaderLogo}
                 alt={primaryAdmin.companyName}
-                className="w-16 h-16 object-contain rounded-xl border border-slate-200 p-1 bg-white"
+                className="w-16 h-16 object-contain rounded-xl border border-slate-200 p-1 bg-white shrink-0"
+                referrerPolicy="no-referrer"
               />
             ) : (
-              <div className="w-16 h-16 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-2xl shadow-sm">
+              <div className="w-16 h-16 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-2xl shadow-sm shrink-0">
                 {primaryAdmin.companyName.charAt(0)}
               </div>
             )}
@@ -2152,20 +2249,37 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
         {/* Properties Ledger by Company */}
         {Array.from(propertiesByAdmin.entries()).map(([adminId, items]) => {
           const companyAdmin = administrators.find((a) => a.id === adminId) || items[0].admin;
+          const companyLogo = companyAdmin.logoUrl || (companyAdmin.isDefault ? profile?.logoUrl : undefined);
 
           return (
             <div key={adminId} className="space-y-6 pt-2">
-              {administrators.length > 1 && (
-                <div className="flex items-center justify-between pb-2 border-b border-slate-300">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-sky-700" />
-                    <h3 className="font-black text-sm text-slate-900 uppercase">
+              <div className="flex items-center justify-between pb-3 border-b-2 border-slate-300">
+                <div className="flex items-center gap-3">
+                  {companyLogo ? (
+                    <img
+                      src={companyLogo}
+                      alt={companyAdmin.companyName}
+                      className="w-12 h-12 object-contain rounded-xl border border-slate-200 p-1 bg-white shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold text-base shrink-0 shadow-xs">
+                      <Building2 className="w-6 h-6 text-sky-400" />
+                    </div>
+                  )}
+                  <div>
+                    <h3 className="font-black text-sm text-slate-900 uppercase tracking-tight">
                       Empresa: {companyAdmin.companyName} ({items.length} propiedades)
                     </h3>
+                    <p className="text-xs text-slate-600">
+                      Representante: {companyAdmin.landlordName} • RFC/ID: {companyAdmin.taxId || 'N/A'} • Tel: {companyAdmin.phone || 'N/A'}
+                    </p>
                   </div>
-                  <span className="text-xs text-slate-500">RFC/ID: {companyAdmin.taxId}</span>
                 </div>
-              )}
+                <span className="text-xs text-slate-700 font-bold bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">
+                  Moneda: {companyAdmin.currencySymbol || '$'} ({companyAdmin.currencyCode || 'USD'})
+                </span>
+              </div>
 
               {/* Individual Property Blocks */}
               {items.map((item) => {

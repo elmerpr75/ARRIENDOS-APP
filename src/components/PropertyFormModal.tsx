@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Property, Tenant, Administrator } from '../types';
+import { Property, Tenant, Administrator, PropertyStatus, RentPeriod } from '../types';
 import { loadAdministrators } from '../utils/storage';
-import { X, Building2, User, Phone, Calendar, DollarSign, AlertCircle, FileText, Droplets, Zap, Wrench, Check, HelpCircle, ShieldAlert } from 'lucide-react';
+import { X, Building2, User, Phone, Calendar, DollarSign, AlertCircle, FileText, Droplets, Zap, Wrench, Check, HelpCircle, ShieldAlert, Trash2 } from 'lucide-react';
 
 interface PropertyFormModalProps {
   isOpen: boolean;
@@ -21,7 +21,9 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
 
   const [propertyIdentifier, setPropertyIdentifier] = useState('');
   const [address, setAddress] = useState('');
+  const [propertyStatus, setPropertyStatus] = useState<PropertyStatus>('rentado');
   const [rentAmount, setRentAmount] = useState<number | ''>('');
+  const [rentPeriods, setRentPeriods] = useState<RentPeriod[]>([]);
   const [rentDueDay, setRentDueDay] = useState<number>(5);
   const [graceDays, setGraceDays] = useState<number>(3);
   const [lateFeeBase, setLateFeeBase] = useState<number | ''>(300);
@@ -69,7 +71,9 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       setSelectedAdminId(initialProperty.administratorId || admins[0]?.id || 'admin-1');
       setPropertyIdentifier(initialProperty.propertyIdentifier || '');
       setAddress(initialProperty.address || '');
+      setPropertyStatus(initialProperty.status || 'rentado');
       setRentAmount(initialProperty.rentAmount ?? '');
+      setRentPeriods(initialProperty.rentPeriods || []);
       setRentDueDay(initialProperty.rentDueDay ?? 5);
       setGraceDays(initialProperty.graceDays ?? 3);
       setLateFeeBase(initialProperty.lateFeeBase ?? 300);
@@ -112,10 +116,11 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       }
     } else {
       setSelectedAdminId(admins[0]?.id || 'admin-1');
-      // Default empty form for new property
       setPropertyIdentifier('');
       setAddress('');
+      setPropertyStatus('rentado');
       setRentAmount('');
+      setRentPeriods([]);
       setRentDueDay(5);
       setGraceDays(3);
       setLateFeeBase(300);
@@ -200,7 +205,9 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       administratorId: selectedAdminId,
       propertyIdentifier: propertyIdentifier.trim(),
       address: address.trim(),
+      status: propertyStatus,
       rentAmount: Number(rentAmount),
+      rentPeriods: rentPeriods.length > 0 ? rentPeriods : undefined,
       rentDueDay: Number(rentDueDay) || 1,
       graceDays: Number(graceDays) || 0,
       lateFeeBase: Number(lateFeeBase) || 0,
@@ -337,6 +344,24 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                 />
               </div>
             </div>
+
+            {/* Property Status Selector */}
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Estatus de Propiedad *
+              </label>
+              <select
+                value={propertyStatus}
+                onChange={(e) => setPropertyStatus(e.target.value as PropertyStatus)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
+              >
+                <option value="rentado">🟢 Rentado</option>
+                <option value="vacante">⚪ Vacante</option>
+                <option value="en_mantenimiento">🟡 En Mantenimiento</option>
+                <option value="en_proceso_legal">🔴 En Proceso Legal</option>
+                <option value="multifamiliar">🟣 Multi-familiar (Sombrilla Adm)</option>
+              </select>
+            </div>
           </div>
 
           {/* Section 2: Rent and Late Fee Conditions */}
@@ -406,6 +431,79 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
                 />
               </div>
+            </div>
+
+            {/* Escalated Rent Periods */}
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                    Renta Escalonada / Períodos de Renta Diferentes (Opcional)
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Establece diferentes montos de renta y fechas de efectividad para contratos con incremento escalonado.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextDate = new Date().toISOString().split('T')[0];
+                    setRentPeriods([...rentPeriods, { id: `rp-${Date.now()}`, amount: Number(rentAmount) || 0, effectiveDate: nextDate }]);
+                  }}
+                  className="px-2.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  + Agregar Período
+                </button>
+              </div>
+
+              {rentPeriods.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  {rentPeriods.map((period, idx) => (
+                    <div key={period.id} className="flex items-center gap-2 bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Fecha de Efectividad</label>
+                        <input
+                          type="date"
+                          value={period.effectiveDate}
+                          onChange={(e) => {
+                            const updated = [...rentPeriods];
+                            updated[idx].effectiveDate = e.target.value;
+                            setRentPeriods(updated);
+                          }}
+                          className="w-full px-2.5 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs"
+                          required
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Monto de Renta ($)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={period.amount}
+                          onChange={(e) => {
+                            const updated = [...rentPeriods];
+                            updated[idx].amount = Number(e.target.value) || 0;
+                            setRentPeriods(updated);
+                          }}
+                          className="w-full px-2.5 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-bold text-emerald-600"
+                          required
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRentPeriods(rentPeriods.filter((_, i) => i !== idx));
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 mt-4 transition cursor-pointer"
+                        title="Eliminar período"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -50,16 +50,16 @@ export const translations = {
     appSubtitle: 'Control Integral de Alquileres, Cobranza & Recibos',
     androidWeb: 'Android & Web',
     googleDriveSync: 'Google Drive',
-    logoTimbre: 'Logo & Timbre',
+    logoTimbre: 'Configuración',
     notifications: 'Notificaciones',
     pendingAlerts: 'avisos pendientes',
 
     // Nav Tabs
-    tabProperties: 'Propiedades & Inquilinos',
-    tabTracking: 'Control Financiero & Cobranza',
-    tabAudit: 'Libro Contable & Fiscalización',
-    tabReminders: 'Recordatorios & Alertas',
-    tabReports: 'Estado de Cuenta General',
+    tabProperties: 'Propiedades',
+    tabTracking: 'Cobranza',
+    tabAudit: 'Libro',
+    tabReminders: 'Alertas',
+    tabReports: 'Reporte',
 
     // Common Buttons & Actions
     newProperty: '+ Nueva Propiedad',
@@ -201,16 +201,16 @@ export const translations = {
     appSubtitle: 'Complete Rental Tracking, Collections & Invoices',
     androidWeb: 'Android & Web',
     googleDriveSync: 'Google Drive',
-    logoTimbre: 'Logo & Header',
+    logoTimbre: 'Configuration',
     notifications: 'Notifications',
     pendingAlerts: 'pending notices',
 
     // Nav Tabs
-    tabProperties: 'Properties & Tenants',
-    tabTracking: 'Financial Tracking & Billing',
-    tabAudit: 'Accounting Ledger & Audit',
-    tabReminders: 'Reminders & Alerts',
-    tabReports: 'General Statement',
+    tabProperties: 'Properties',
+    tabTracking: 'Tracking',
+    tabAudit: 'Ledger',
+    tabReminders: 'Alerts',
+    tabReports: 'Report',
 
     // Common Buttons & Actions
     newProperty: '+ New Property',

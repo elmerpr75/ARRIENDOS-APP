@@ -44,7 +44,6 @@ INSERT INTO public.vip_accounts (email, role, notes)
 VALUES
     ('elmerpr@gmail.com', 'owner_vip', 'Propietario / Super Administrador Vitalicio'),
     ('fam.sanchez.y.flores@gmail.com', 'admin_test', 'Administrador de prueba Vitalicio'),
-    ('casainsulada@gmail.com', 'admin_test', 'Administrador de prueba Vitalicio'),
     ('carmensanchezpr2@gmail.com', 'admin_test', 'Administrador de prueba Vitalicio'),
     ('amnerys.miflosa@gmail.com', 'admin_test', 'Administrador de prueba Vitalicio')
 ON CONFLICT (email) DO UPDATE 
