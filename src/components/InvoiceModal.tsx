@@ -1934,6 +1934,29 @@ Tel: ${admin.phone} | ${admin.email}`;
               </div>
             )}
 
+            {/* Official Administrator Signature Block */}
+            <div className="mt-4 pt-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+              <div className="text-[10px] text-slate-500 italic max-w-sm">
+                * Documento oficial de cobro/liquidación emitido por {admin.companyName || profile.companyName}. Válido para fiscalización y contabilidad legal.
+              </div>
+
+              <div className="text-center shrink-0 min-w-[200px] border-t border-slate-300 pt-1.5">
+                {(admin.signatureUrl || profile.signatureUrl) ? (
+                  <div className="h-12 flex items-center justify-center mb-1">
+                    <img
+                      src={admin.signatureUrl || profile.signatureUrl}
+                      alt="Firma Digital Administrador"
+                      className="h-12 max-w-[180px] object-contain"
+                    />
+                  </div>
+                ) : null}
+                <p className="font-bold text-slate-800 text-xs">{admin.landlordName || profile.landlordName}</p>
+                <p className="text-[10px] font-medium text-slate-500">
+                  Firma Autorizada • {admin.companyName || profile.companyName}
+                </p>
+              </div>
+            </div>
+
             {/* Physical Delivery Receipt Cutoff (Talón de Entrega) */}
             <div className="mt-6 print:mt-3 pt-3 print:pt-2 border-t-2 border-dashed border-slate-300 text-[11px] print:text-[10px]">
               <div className="flex items-center justify-between text-slate-400 mb-2 print:mb-1">
@@ -1941,9 +1964,18 @@ Tel: ${admin.phone} | ${admin.email}`;
                 <span>Folio: {invoiceNumber}</span>
               </div>
               <div className="grid grid-cols-2 gap-8 print:gap-6 text-center pt-4 print:pt-2">
-                <div className="border-t border-slate-400 pt-1">
+                <div className="border-t border-slate-400 pt-1 flex flex-col items-center">
+                  {(admin.signatureUrl || profile.signatureUrl) && (
+                    <img
+                      src={admin.signatureUrl || profile.signatureUrl}
+                      alt="Firma Digital Administrador"
+                      className="h-10 max-w-[160px] object-contain mb-0.5"
+                    />
+                  )}
                   <p className="font-bold text-slate-800">{admin.landlordName || profile.landlordName}</p>
-                  <p className="text-[10px] text-slate-500">Firma del Arrendador / Administrador</p>
+                  <p className="text-[10px] text-slate-500">
+                    Firma del Arrendador / Administrador{(admin.signatureUrl || profile.signatureUrl) ? ' (Digitalizada)' : ''}
+                  </p>
                 </div>
                 <div className="border-t border-slate-400 pt-1">
                   <p className="font-bold text-slate-800">{recipientName}</p>

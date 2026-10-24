@@ -39,6 +39,7 @@ export interface Administrator {
   email: string;
   address: string;
   logoUrl?: string;
+  signatureUrl?: string; // Digital signature Data URL or external image URL
   bankDetails: string;
   invoiceNote: string;
   currencyCode: string; // e.g. "USD", "EUR"
@@ -157,6 +158,7 @@ export interface LandlordProfile {
   email: string;
   address: string;
   logoUrl?: string; // Data URL or external URL
+  signatureUrl?: string; // Data URL or external URL for digital signature
   bankDetails: string; // Datos para depósito / transferencia
   invoiceNote: string; // Términos o nota al pie
   currencyCode?: string;

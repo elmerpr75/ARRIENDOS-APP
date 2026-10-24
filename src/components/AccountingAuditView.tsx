@@ -1057,6 +1057,8 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
 
   // Pre-report filters & selection
   const [selectedAdminId, setSelectedAdminId] = useState<string>('all');
+  const [propertyStatusFilter, setPropertyStatusFilter] = useState<string>('all');
+  const [selectedPropertyFilter, setSelectedPropertyFilter] = useState<string>('all');
   const [computationDate, setComputationDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
@@ -1172,10 +1174,16 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
     return parseLocalDate(computationDate);
   }, [computationDate]);
 
-  // Filter properties by company and search query
+  // Filter properties by company, status, specific property, and search query
   const eligibleProperties = useMemo(() => {
     return properties.filter((p) => {
       if (selectedAdminId !== 'all' && (p.administratorId || 'admin-1') !== selectedAdminId) {
+        return false;
+      }
+      if (propertyStatusFilter !== 'all' && (p.status || 'rentado') !== propertyStatusFilter) {
+        return false;
+      }
+      if (selectedPropertyFilter !== 'all' && p.id !== selectedPropertyFilter) {
         return false;
       }
       if (searchQuery.trim()) {
@@ -1190,7 +1198,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
       }
       return true;
     });
-  }, [properties, selectedAdminId, searchQuery]);
+  }, [properties, selectedAdminId, propertyStatusFilter, selectedPropertyFilter, searchQuery]);
 
   // Toggle selection for all visible eligible properties
   const handleSelectAllVisible = () => {
@@ -1570,28 +1578,13 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            {/* Botón de descarga de código .ZIP protegido: Exclusivo para la cuenta de desarrollador / VIP */}
-            {isDeveloperUser && (
-              <a
-                href="/app-codigo-actualizado.zip"
-                download="app-codigo-actualizado.zip"
-                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer no-underline"
-                title="Descargar código fuente actualizado completo (.ZIP) — Exclusivo Cuenta de Desarrollador / VIP"
-              >
-                <FolderArchive className="w-4 h-4 text-emerald-200" />
-                <span>Descargar Código (.ZIP)</span>
-                <span className="px-1.5 py-0.2 bg-emerald-950/70 text-emerald-200 text-[10px] font-extrabold rounded">
-                  DEV
-                </span>
-              </a>
-            )}
             <button
               onClick={handlePrintLedger}
               className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
               title="Imprimir formato de libro contable idéntico a pantalla"
             >
               <Printer className="w-4 h-4" />
-              <span>Imprimir Libro</span>
+              <span>Imprimir</span>
             </button>
             <button
               onClick={handleDownloadPdf}
@@ -1607,7 +1600,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  <span>Descargar PDF</span>
+                  <span>PDF</span>
                 </>
               )}
             </button>
@@ -1677,7 +1670,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
         )}
 
         {/* Filters and Selectors */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5 pt-1">
           {/* Filter 1: Empresa / Administrador */}
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
@@ -1687,7 +1680,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
             <select
               value={selectedAdminId}
               onChange={(e) => setSelectedAdminId(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 focus:outline-hidden cursor-pointer"
             >
               <option value="all">Todas las Empresas ({administrators.length})</option>
               {administrators.map((admin) => (
@@ -1698,11 +1691,53 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
             </select>
           </div>
 
-          {/* Filter 2: Fecha de Cómputo del Informe */}
+          {/* Filter 2: Estatus de Propiedad */}
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-              <span>Fecha de Cómputo / Auditoría:</span>
+              <Tag className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Estatus de Propiedad:</span>
+            </label>
+            <select
+              value={propertyStatusFilter}
+              onChange={(e) => setPropertyStatusFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 focus:outline-hidden cursor-pointer"
+            >
+              <option value="all">🏷️ Estatus: Todos</option>
+              <option value="rentado">🟢 Rentado</option>
+              <option value="vacante">⚪ Vacante</option>
+              <option value="en_mantenimiento">🟡 En Mantenimiento</option>
+              <option value="en_proceso_legal">🔴 En Proceso Legal</option>
+              <option value="multifamiliar">🟣 Multi-familiar</option>
+            </select>
+          </div>
+
+          {/* Filter 3: Propiedad Definida */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+              <Building2 className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Propiedad Específica:</span>
+            </label>
+            <select
+              value={selectedPropertyFilter}
+              onChange={(e) => setSelectedPropertyFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 focus:outline-hidden cursor-pointer truncate"
+            >
+              <option value="all">🏠 Propiedad: Todas ({properties.length})</option>
+              {properties
+                .filter((p) => selectedAdminId === 'all' || (p.administratorId || 'admin-1') === selectedAdminId)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.propertyIdentifier} - {p.tenant1?.name || 'Sin inquilino'}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          {/* Filter 4: Fecha de Cómputo del Informe */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5 text-violet-500" />
+              <span>Fecha de Cómputo:</span>
             </label>
             <input
               type="date"
@@ -1712,7 +1747,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
             />
           </div>
 
-          {/* Filter 3: Búsqueda rápida */}
+          {/* Filter 5: Búsqueda rápida */}
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
               <Search className="w-3.5 h-3.5 text-slate-400" />
@@ -1722,12 +1757,12 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Inquilino, depto, dirección..."
+              placeholder="Inquilino, depto, ref..."
               className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
             />
           </div>
 
-          {/* Filter 4: Toggle Solo con Adeudo */}
+          {/* Filter 6: Toggle Solo con Adeudo */}
           <div className="flex flex-col justify-end">
             <button
               type="button"
@@ -1739,7 +1774,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
               }`}
             >
               <AlertTriangle className="w-4 h-4 text-amber-500" />
-              <span>{onlyWithDebt ? 'Mostrando Solo con Saldo Pendiente' : 'Mostrar Todas las Cuentas'}</span>
+              <span className="truncate">{onlyWithDebt ? 'Solo con Deuda' : 'Todas las Cuentas'}</span>
             </button>
           </div>
         </div>
@@ -3467,12 +3502,21 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
 
           {/* Sello y Firmas */}
           <div className="pt-6 grid grid-cols-2 gap-8 text-center text-xs text-slate-600">
-            <div>
+            <div className="flex flex-col items-center">
+              {(primaryAdmin.signatureUrl || profile?.signatureUrl) && (
+                <img
+                  src={primaryAdmin.signatureUrl || profile?.signatureUrl}
+                  alt="Firma Digital"
+                  className="h-12 max-w-[180px] object-contain mb-1"
+                />
+              )}
               <div className="w-48 border-b border-slate-400 mx-auto mb-1" />
               <p className="font-bold text-slate-800">{primaryAdmin.landlordName}</p>
-              <p className="text-[10px] text-slate-500">Administrador Responsable • {primaryAdmin.companyName}</p>
+              <p className="text-[10px] text-slate-500">
+                Administrador Responsable{(primaryAdmin.signatureUrl || profile?.signatureUrl) ? ' (Firma Digitalizada)' : ''} • {primaryAdmin.companyName}
+              </p>
             </div>
-            <div>
+            <div className="flex flex-col items-center justify-end">
               <div className="w-48 border-b border-slate-400 mx-auto mb-1" />
               <p className="font-bold text-slate-800">Sello de Auditoría Contable</p>
               <p className="text-[10px] text-slate-500">Certificación de Cuentas y Saldos Segregados</p>

@@ -14,6 +14,10 @@ import {
   Filter,
   Layers,
   FileText,
+  PieChart,
+  DollarSign,
+  AlertTriangle,
+  TrendingUp,
 } from 'lucide-react';
 
 interface StatusReportViewProps {
@@ -32,6 +36,8 @@ export const StatusReportView: React.FC<StatusReportViewProps> = ({
   onOpenInvoice,
 }) => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'ok' | 'contract_renewal'>('all');
+  const [propertyStatusFilter, setPropertyStatusFilter] = useState('all');
+  const [selectedPropertyFilter, setSelectedPropertyFilter] = useState('all');
   const [selectedAdminFilter, setSelectedAdminFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -70,6 +76,15 @@ export const StatusReportView: React.FC<StatusReportViewProps> = ({
 
     if (selectedAdminFilter !== 'all' && propAdminId !== selectedAdminFilter) {
       return false;
+    }
+
+    if (propertyStatusFilter !== 'all') {
+      const propStatus = prop.status || 'rentado';
+      if (propStatus !== propertyStatusFilter) return false;
+    }
+
+    if (selectedPropertyFilter !== 'all') {
+      if (prop.id !== selectedPropertyFilter) return false;
     }
 
     const matchesSearch =
@@ -125,6 +140,44 @@ export const StatusReportView: React.FC<StatusReportViewProps> = ({
       };
     })
     .filter((g) => g.items.length > 0 || selectedAdminFilter !== 'all');
+
+  // Executive Financial Recount Metrics
+  // Exclude administrative umbrella properties ('multifamiliar') from occupancy rate & potential rent
+  const rentEligibleProps = properties.filter(
+    (p) => (p.status || 'rentado') !== 'multifamiliar'
+  );
+  const occupiedProps = rentEligibleProps.filter(
+    (p) => (p.status || 'rentado') === 'rentado'
+  );
+  const occupancyRate =
+    rentEligibleProps.length > 0
+      ? Math.round((occupiedProps.length / rentEligibleProps.length) * 100)
+      : 0;
+  const multifamiliarCount = properties.length - rentEligibleProps.length;
+
+  // Potential Monthly Base Rent (sum of rentAmount for rent-eligible properties)
+  const potentialMonthlyIncome = rentEligibleProps.reduce(
+    (sum, p) => sum + (Number(p.rentAmount) || 0),
+    0
+  );
+
+  // Total Overdue Payments
+  const totalOverdueAmount = statuses
+    .filter((s) => s.isOverdue)
+    .reduce((sum, s) => sum + s.totalPendingBalance, 0);
+
+  // Overall Collection Effectiveness (%)
+  const totalGlobalBilled = statuses.reduce((sum, s) => sum + s.totalBilledThisMonth, 0);
+  const totalGlobalCollected = statuses.reduce((sum, s) => sum + s.totalPaidThisMonth, 0);
+  const historicalCollectionEffectiveness =
+    totalGlobalBilled > 0
+      ? Math.min(100, Math.round((totalGlobalCollected / totalGlobalBilled) * 100))
+      : 100;
+
+  const activeCurrencySymbol =
+    selectedAdminFilter !== 'all' && activeAdmin
+      ? activeAdmin.currencySymbol
+      : effectiveAdmins[0]?.currencySymbol || '$';
 
   const reportFilename = `Reporte-Arrendamientos-${selectedAdminFilter !== 'all' && activeAdmin ? activeAdmin.companyName.replace(/\s+/g, '_') : 'General'}-${new Date().toISOString().split('T')[0]}`;
 
@@ -259,15 +312,60 @@ export const StatusReportView: React.FC<StatusReportViewProps> = ({
 
       {/* Filters (Hidden on print) */}
       <div className="no-print flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs text-xs">
-        <div className="relative flex-1 min-w-[200px] sm:max-w-xs">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Filtrar por inquilino, propiedad..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-          />
+        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
+          <div className="relative min-w-[180px] sm:w-56">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              placeholder="Filtrar por inquilino, propiedad..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+            />
+          </div>
+
+          {/* Dropdown Estatus Propiedad */}
+          <select
+            value={propertyStatusFilter}
+            onChange={(e) => setPropertyStatusFilter(e.target.value)}
+            className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-200 font-semibold focus:outline-hidden focus:ring-2 focus:ring-sky-500 cursor-pointer"
+          >
+            <option value="all">🏷️ Estatus: Todos</option>
+            <option value="rentado">🟢 Rentado</option>
+            <option value="vacante">⚪ Vacante</option>
+            <option value="en_mantenimiento">🟡 En Mantenimiento</option>
+            <option value="en_proceso_legal">🔴 En Proceso Legal</option>
+            <option value="multifamiliar">🟣 Multi-familiar</option>
+          </select>
+
+          {/* Dropdown Propiedad Definida */}
+          <select
+            value={selectedPropertyFilter}
+            onChange={(e) => setSelectedPropertyFilter(e.target.value)}
+            className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-200 font-semibold focus:outline-hidden focus:ring-2 focus:ring-sky-500 cursor-pointer max-w-[220px] truncate"
+          >
+            <option value="all">🏠 Propiedad: Todas ({properties.length})</option>
+            {properties
+              .filter((p) => selectedAdminFilter === 'all' || (p.administratorId || 'admin-1') === selectedAdminFilter)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.propertyIdentifier} - {p.tenant1?.name || 'Sin inquilino'}
+                </option>
+              ))}
+          </select>
+
+          {(propertyStatusFilter !== 'all' || selectedPropertyFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => {
+                setPropertyStatusFilter('all');
+                setSelectedPropertyFilter('all');
+              }}
+              className="px-2 py-1 text-xs text-rose-600 dark:text-rose-400 hover:underline font-semibold cursor-pointer"
+            >
+              Limpiar
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -364,6 +462,80 @@ export const StatusReportView: React.FC<StatusReportViewProps> = ({
             </p>
             <p className="text-xs text-slate-500">
               Total Inmuebles Evaluados: {filteredStatuses.length}
+            </p>
+          </div>
+        </div>
+
+        {/* Recuento Financiero Ejecutivo Banner */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+          {/* Card 1: Tasa de Ocupación */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                <PieChart className="w-3.5 h-3.5 text-sky-600" />
+                Tasa de Ocupación
+              </span>
+              <span className="text-[10px] px-1.5 py-0.2 bg-sky-100 text-sky-800 rounded font-extrabold">
+                {occupancyRate}%
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-black text-slate-900">
+              {occupancyRate}%
+            </p>
+            <p className="text-[10px] text-slate-500 truncate">
+              {occupiedProps.length} de {rentEligibleProps.length} unidades rentables
+              {multifamiliarCount > 0 ? ` (${multifamiliarCount} sombrilla${multifamiliarCount > 1 ? 's' : ''} excl.)` : ''}
+            </p>
+          </div>
+
+          {/* Card 2: Ingreso Potencial Mensual */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1">
+                <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                Ingreso Potencial Mensual
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-black text-emerald-700">
+              {formatCurrency(potentialMonthlyIncome, activeCurrencySymbol)}
+            </p>
+            <p className="text-[10px] text-slate-500 truncate">
+              Renta base al 100% de ocupación
+            </p>
+          </div>
+
+          {/* Card 3: Total Pagos Vencidos */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                Total Pagos Vencidos
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-black text-rose-600">
+              {formatCurrency(totalOverdueAmount, activeCurrencySymbol)}
+            </p>
+            <p className="text-[10px] text-slate-500 truncate">
+              Suma de saldos con mora y retraso
+            </p>
+          </div>
+
+          {/* Card 4: Efectividad Histórica de Cobranza */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-700 flex items-center gap-1">
+                <TrendingUp className="w-3.5 h-3.5 text-indigo-600" />
+                Efectividad de Cobranza
+              </span>
+              <span className="text-[10px] px-1.5 py-0.2 bg-indigo-100 text-indigo-800 rounded font-extrabold">
+                {historicalCollectionEffectiveness}%
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-black text-indigo-900">
+              {historicalCollectionEffectiveness}%
+            </p>
+            <p className="text-[10px] text-slate-500 truncate">
+              Cobrado vs facturado en período
             </p>
           </div>
         </div>
@@ -585,6 +757,23 @@ export const StatusReportView: React.FC<StatusReportViewProps> = ({
                     </tbody>
                   </table>
                 </div>
+
+                {/* Official Administrator Signature Block for this company */}
+                {(admin.signatureUrl || profile.signatureUrl) && (
+                  <div className="pt-3 pb-1 flex justify-end">
+                    <div className="text-center w-56 border-t border-slate-300 pt-1.5">
+                      <img
+                        src={admin.signatureUrl || profile.signatureUrl}
+                        alt="Firma Digital"
+                        className="h-11 max-w-[180px] object-contain mx-auto mb-0.5"
+                      />
+                      <p className="font-bold text-xs text-slate-800">{admin.landlordName || admin.companyName}</p>
+                      <p className="text-[10px] text-slate-500">
+                        Firma Digital del Administrador • {admin.companyName}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })

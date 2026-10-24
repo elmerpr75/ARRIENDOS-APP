@@ -19,7 +19,12 @@ import {
   Droplets,
   Zap,
   Receipt,
+  Printer,
+  Download,
+  Loader2,
+  Check,
 } from 'lucide-react';
+import { downloadElementAsPdf, printElementSafely } from '../utils/pdfGenerator';
 
 interface TrackingViewProps {
   properties: Property[];
@@ -41,6 +46,7 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
   onOpenInvoice,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [propertyStatusFilter, setPropertyStatusFilter] = useState('all');
   const [selectedPropertyFilter, setSelectedPropertyFilter] = useState('all');
   const [selectedAdminFilter, setSelectedAdminFilter] = useState('all');
   const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
@@ -104,11 +110,20 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
       ? null
       : adminStats.find((s) => s.admin.id === selectedAdminFilter);
 
-  // Filter property statuses by admin
+  // Filter property statuses by admin, property status, and specific property
   const filteredStatuses = propertyStatuses.filter((s) => {
-    if (selectedAdminFilter === 'all') return true;
-    const defaultId = effectiveAdmins[0]?.id || 'admin-1';
-    return (s.property.administratorId || defaultId) === selectedAdminFilter;
+    if (selectedAdminFilter !== 'all') {
+      const defaultId = effectiveAdmins[0]?.id || 'admin-1';
+      if ((s.property.administratorId || defaultId) !== selectedAdminFilter) return false;
+    }
+    if (propertyStatusFilter !== 'all') {
+      const propStatus = s.property.status || 'rentado';
+      if (propStatus !== propertyStatusFilter) return false;
+    }
+    if (selectedPropertyFilter !== 'all') {
+      if (s.property.id !== selectedPropertyFilter) return false;
+    }
+    return true;
   });
 
   // Filter payments
@@ -118,6 +133,7 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
       const propName = prop?.propertyIdentifier || '';
       const defaultId = effectiveAdmins[0]?.id || 'admin-1';
       const propAdminId = prop?.administratorId || defaultId;
+      const propStatus = prop?.status || 'rentado';
 
       const matchesSearch =
         payment.payerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -129,10 +145,36 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
         selectedPropertyFilter === 'all' || payment.propertyId === selectedPropertyFilter;
       const matchesAdmin =
         selectedAdminFilter === 'all' || propAdminId === selectedAdminFilter;
+      const matchesStatus =
+        propertyStatusFilter === 'all' || propStatus === propertyStatusFilter;
 
-      return matchesSearch && matchesProp && matchesAdmin;
+      return matchesSearch && matchesProp && matchesAdmin && matchesStatus;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfSuccess, setPdfSuccess] = useState(false);
+
+  const activeAdminForReport = selectedAdminFilter !== 'all'
+    ? effectiveAdmins.find((a) => a.id === selectedAdminFilter) || effectiveAdmins[0]
+    : effectiveAdmins[0];
+
+  const reportFilename = `Reporte-Cobranza-${activeAdminForReport ? activeAdminForReport.companyName.replace(/\s+/g, '_') : 'General'}-${new Date().toISOString().split('T')[0]}`;
+
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPdf(true);
+    setPdfSuccess(false);
+    const success = await downloadElementAsPdf('printable-cobranza', reportFilename);
+    setIsGeneratingPdf(false);
+    if (success) {
+      setPdfSuccess(true);
+      setTimeout(() => setPdfSuccess(false), 3000);
+    }
+  };
+
+  const handlePrint = () => {
+    printElementSafely('printable-cobranza', reportFilename);
+  };
 
   const handleConfirmDelete = () => {
     if (paymentToDelete) {
@@ -143,6 +185,51 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Top Action Header Bar (No Print) */}
+      <div className="no-print bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-emerald-600" />
+            Control Financiero & Reporte de Cobranza
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Monitoreo de saldos por inquilino, moras aplicadas e historial de pagos recibidos
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          {/* Direct PDF Download Button */}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-50 cursor-pointer"
+            title="Descargar reporte de cobranza en formato PDF"
+          >
+            {isGeneratingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : pdfSuccess ? (
+              <Check className="w-4 h-4 text-white" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>
+              {isGeneratingPdf ? 'Generando PDF...' : pdfSuccess ? '¡PDF Descargado!' : 'Descargar PDF'}
+            </span>
+          </button>
+
+          {/* Print Button */}
+          <button
+            onClick={handlePrint}
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+            title="Imprimir reporte de cobranza"
+          >
+            <Printer className="w-4 h-4" /> Imprimir Cobranza
+          </button>
+        </div>
+      </div>
+
+      {/* Printable Cobranza Container */}
+      <div id="printable-cobranza" className="space-y-6 bg-white dark:bg-slate-900 p-2 sm:p-4 rounded-2xl print:p-0 print:bg-white print:text-slate-900">
       {/* Administrator Filter Tabs */}
       {effectiveAdmins.length > 1 && (
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-2">
@@ -382,6 +469,60 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
           </button>
         </div>
 
+        {/* Dropdown Filters: Estatus de Propiedad y Propiedad Definida */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 pb-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Filtrar por:
+            </span>
+
+            {/* Dropdown Estatus Propiedad */}
+            <select
+              value={propertyStatusFilter}
+              onChange={(e) => setPropertyStatusFilter(e.target.value)}
+              className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-200 font-semibold focus:outline-hidden focus:ring-2 focus:ring-sky-500 cursor-pointer"
+            >
+              <option value="all">🏷️ Estatus: Todos</option>
+              <option value="rentado">🟢 Rentado</option>
+              <option value="vacante">⚪ Vacante</option>
+              <option value="en_mantenimiento">🟡 En Mantenimiento</option>
+              <option value="en_proceso_legal">🔴 En Proceso Legal</option>
+              <option value="multifamiliar">🟣 Multi-familiar</option>
+            </select>
+
+            {/* Dropdown Propiedad Definida */}
+            <select
+              value={selectedPropertyFilter}
+              onChange={(e) => setSelectedPropertyFilter(e.target.value)}
+              className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-200 font-semibold focus:outline-hidden focus:ring-2 focus:ring-sky-500 cursor-pointer max-w-[240px] truncate"
+            >
+              <option value="all">🏠 Propiedad: Todas ({properties.length})</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.propertyIdentifier} - {p.tenant1?.name || 'Sin inquilino'}
+                </option>
+              ))}
+            </select>
+
+            {(propertyStatusFilter !== 'all' || selectedPropertyFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPropertyStatusFilter('all');
+                  setSelectedPropertyFilter('all');
+                }}
+                className="px-2.5 py-1 text-xs text-rose-600 dark:text-rose-400 hover:underline font-semibold cursor-pointer"
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+
+          <span className="text-[11px] text-slate-400 font-medium">
+            Mostrando {filteredStatuses.length} de {properties.length} propiedades
+          </span>
+        </div>
+
         {/* Balances Quick Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
@@ -402,7 +543,14 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredStatuses.map((status) => {
+              {filteredStatuses.length === 0 ? (
+                <tr>
+                  <td colSpan={12} className="py-8 text-center text-xs text-slate-400">
+                    No se encontraron propiedades con los filtros seleccionados.
+                  </td>
+                </tr>
+              ) : (
+                filteredStatuses.map((status) => {
                 const { property } = status;
                 const isPaid = status.totalPendingBalance <= 0;
                 const admin = getAdministratorForProperty(property, administrators);
@@ -564,8 +712,9 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
+              })
+            )}
+          </tbody>
           </table>
         </div>
       </div>
@@ -584,7 +733,7 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {/* Search Input */}
-            <div className="relative flex-1 sm:w-64">
+            <div className="relative flex-1 sm:w-52">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
               <input
                 type="text"
@@ -595,13 +744,27 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
               />
             </div>
 
+            {/* Property Status Filter Dropdown */}
+            <select
+              value={propertyStatusFilter}
+              onChange={(e) => setPropertyStatusFilter(e.target.value)}
+              className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-300 focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium cursor-pointer"
+            >
+              <option value="all">🏷️ Estatus: Todos</option>
+              <option value="rentado">🟢 Rentado</option>
+              <option value="vacante">⚪ Vacante</option>
+              <option value="en_mantenimiento">🟡 En Mantenimiento</option>
+              <option value="en_proceso_legal">🔴 En Proceso Legal</option>
+              <option value="multifamiliar">🟣 Multi-familiar</option>
+            </select>
+
             {/* Property Filter Dropdown */}
             <select
               value={selectedPropertyFilter}
               onChange={(e) => setSelectedPropertyFilter(e.target.value)}
-              className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-300 focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium"
+              className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-300 focus:outline-hidden focus:ring-2 focus:ring-sky-500 font-medium cursor-pointer max-w-[210px] truncate"
             >
-              <option value="all">Todas las propiedades</option>
+              <option value="all">🏠 Propiedad: Todas</option>
               {properties.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.propertyIdentifier}
@@ -694,9 +857,34 @@ export const TrackingView: React.FC<TrackingViewProps> = ({
             </table>
           )}
         </div>
-      </div>
+        {/* Footer Signature Block on Print / PDF */}
+        {activeAdminForReport && (
+          <div className="pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-600 dark:text-slate-400">
+            <div className="text-[10px] text-slate-400 italic">
+              * Reporte oficial de cobranza e historial de pagos emitido por {activeAdminForReport.companyName}. Válido para control de auditoría interna y fiscalización de arrendamientos.
+            </div>
 
-      {/* Delete Payment Modal */}
+            <div className="text-center shrink-0 min-w-[200px] border-t border-slate-300 dark:border-slate-700 pt-1.5">
+              {activeAdminForReport.signatureUrl && (
+                <img
+                  src={activeAdminForReport.signatureUrl}
+                  alt="Firma Digital"
+                  className="h-11 max-w-[180px] object-contain mx-auto mb-0.5"
+                />
+              )}
+              <p className="font-bold text-slate-800 dark:text-slate-200">
+                {activeAdminForReport.landlordName || activeAdminForReport.companyName}
+              </p>
+              <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                Firma Digital del Administrador • {activeAdminForReport.companyName}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+
+    {/* Delete Payment Modal */}
       {paymentToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
           <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 dark:border-slate-800 p-5 space-y-4">

@@ -329,6 +329,14 @@ export default function App() {
     });
   };
 
+  const handleDeleteExpenseCategory = (categoryToDelete: string) => {
+    setExpenseCategories((prev) => {
+      const updated = prev.filter((cat) => cat !== categoryToDelete);
+      saveExpenseCategories(updated);
+      return updated;
+    });
+  };
+
   // Sign out, backup, and lock session handlers
   const handleConfirmLogout = async (backupChoice: 'gdrive' | 'local' | 'none') => {
     // 1. Force flush all current in-memory state to persistent storage first
@@ -1081,6 +1089,7 @@ export default function App() {
           onSaveExpense={handleSaveExpense}
           onDeleteExpense={handleDeleteExpense}
           onAddCategory={handleAddExpenseCategory}
+          onDeleteCategory={handleDeleteExpenseCategory}
           currentLang={currentLang}
         />
       )}

@@ -24,7 +24,9 @@ import {
   Key,
   Lock,
   KeyRound,
+  PenTool,
 } from 'lucide-react';
+import { SignaturePadModal } from './SignaturePadModal';
 import { exportAppData, importAppData, loadAdministrators, saveAdministrators } from '../utils/storage';
 import {
   getNotificationPermissionStatus,
@@ -110,7 +112,9 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
   const [testNotificationFeedback, setTestNotificationFeedback] = useState<string | null>(null);
 
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const signatureFileInputRef = useRef<HTMLInputElement>(null);
   const jsonImportRef = useRef<HTMLInputElement>(null);
 
   // Supabase Backend state
@@ -288,6 +292,30 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
     updateCurrentAdmin({ logoUrl: undefined });
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        setImportStatus('Error: Por favor selecciona una imagen menor a 2MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          updateCurrentAdmin({ signatureUrl: reader.result });
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveSignature = () => {
+    updateCurrentAdmin({ signatureUrl: undefined });
+    if (signatureFileInputRef.current) {
+      signatureFileInputRef.current.value = '';
     }
   };
 
@@ -592,6 +620,79 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
                   </label>
                   <span className="block text-[10px] text-slate-400">
                     PNG, JPG o SVG (máx. 2MB)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Digital Signature Upload & Touch Pad Section for this company */}
+            <div className="p-3 bg-white dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <PenTool className="w-3.5 h-3.5" /> Firma Digital del Administrador
+                </span>
+                {currentAdmin.signatureUrl && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveSignature}
+                    className="text-xs text-rose-600 hover:text-rose-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" /> Quitar Firma
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-4">
+                {currentAdmin.signatureUrl ? (
+                  <div className="w-24 h-16 rounded-xl border border-emerald-300 dark:border-emerald-700/70 p-1 bg-white flex items-center justify-center shrink-0 overflow-hidden shadow-2xs">
+                    <img
+                      src={currentAdmin.signatureUrl}
+                      alt="Firma Digital"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-24 h-16 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400 p-1 text-center text-[9px] shrink-0 bg-white/50">
+                    <PenTool className="w-5 h-5 mb-0.5 text-slate-400" />
+                    Sin Firma
+                  </div>
+                )}
+
+                <div className="flex-1 space-y-1.5">
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    Añade la firma autógrafa digitalizada para autorizar facturas, recibos de cobro, avisos de renta y reportes ejecutivos.
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Option A: Upload image file */}
+                    <input
+                      type="file"
+                      ref={signatureFileInputRef}
+                      accept="image/*"
+                      onChange={handleSignatureUpload}
+                      className="hidden"
+                      id={`sig-file-input-${currentAdmin.id}`}
+                    />
+                    <label
+                      htmlFor={`sig-file-input-${currentAdmin.id}`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold cursor-pointer border border-slate-300 dark:border-slate-700 transition"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-slate-500" /> Subir Imagen de Firma
+                    </label>
+
+                    {/* Option B: Touch / Mouse signature pad modal */}
+                    <button
+                      type="button"
+                      onClick={() => setIsSignatureModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold cursor-pointer shadow-xs transition"
+                    >
+                      <PenTool className="w-3.5 h-3.5" />
+                      <span>Dibujar Firma en Pantalla Touch / Mouse</span>
+                    </button>
+                  </div>
+
+                  <span className="block text-[10px] text-slate-400">
+                    PNG transparente o JPG • Captura touch lista para móviles, tablets y PC
                   </span>
                 </div>
               </div>
@@ -1258,6 +1359,16 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
           </div>
         </form>
       </div>
+
+      <SignaturePadModal
+        isOpen={isSignatureModalOpen}
+        onClose={() => setIsSignatureModalOpen(false)}
+        onSaveSignature={(signatureDataUrl) => {
+          updateCurrentAdmin({ signatureUrl: signatureDataUrl });
+        }}
+        initialSignatureUrl={currentAdmin.signatureUrl}
+        companyName={currentAdmin.companyName}
+      />
     </div>
   );
 };

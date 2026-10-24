@@ -31,6 +31,7 @@ interface PropertyExpensesModalProps {
   onSaveExpense: (expense: Expense) => void;
   onDeleteExpense: (expenseId: string) => void;
   onAddCategory: (categoryName: string) => void;
+  onDeleteCategory?: (categoryName: string) => void;
   currentLang?: SupportedLanguage;
 }
 
@@ -44,6 +45,7 @@ export const PropertyExpensesModal: React.FC<PropertyExpensesModalProps> = ({
   onSaveExpense,
   onDeleteExpense,
   onAddCategory,
+  onDeleteCategory,
   currentLang = 'es',
 }) => {
   const isEn = currentLang === 'en';
@@ -58,7 +60,13 @@ export const PropertyExpensesModal: React.FC<PropertyExpensesModalProps> = ({
   const [vendorOrPayee, setVendorOrPayee] = useState<string>('');
   const [receiptNumber, setReceiptNumber] = useState<string>('');
 
-  // New category creation state
+  // Category management emergent modal states
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState<boolean>(false);
+  const [modalNewCategoryName, setModalNewCategoryName] = useState<string>('');
+  const [categoryToDeleteConfirm, setCategoryToDeleteConfirm] = useState<string | null>(null);
+  const [categoryModalError, setCategoryModalError] = useState<string | null>(null);
+
+  // Quick inline category creation state
   const [isCreatingCategory, setIsCreatingCategory] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
 
@@ -111,6 +119,34 @@ export const PropertyExpensesModal: React.FC<PropertyExpensesModalProps> = ({
     setCategory(trimmed);
     setNewCategoryName('');
     setIsCreatingCategory(false);
+  };
+
+  const handleAddCategoryFromModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCategoryModalError(null);
+    const trimmed = modalNewCategoryName.trim();
+    if (!trimmed) {
+      setCategoryModalError(isEn ? 'Please enter a category name.' : 'Por favor ingresa un nombre para la categoría.');
+      return;
+    }
+    if (expenseCategories.includes(trimmed)) {
+      setCategoryModalError(isEn ? 'This category already exists.' : 'Esta categoría ya existe.');
+      return;
+    }
+    onAddCategory(trimmed);
+    setCategory(trimmed);
+    setModalNewCategoryName('');
+  };
+
+  const handleDeleteCategoryFromModal = (catNameToDelete: string) => {
+    if (onDeleteCategory) {
+      onDeleteCategory(catNameToDelete);
+    }
+    setCategoryToDeleteConfirm(null);
+    if (category === catNameToDelete) {
+      const remaining = expenseCategories.filter((c) => c !== catNameToDelete);
+      setCategory(remaining[0] || 'Otros Gastos Operativos');
+    }
   };
 
   const handleSubmitExpense = (e: React.FormEvent) => {
@@ -284,7 +320,7 @@ export const PropertyExpensesModal: React.FC<PropertyExpensesModalProps> = ({
                 </div>
               </div>
 
-              {/* Category selector & option to define a new category */}
+              {/* Category selector & option to define or manage categories */}
               <div className="space-y-2 bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700/80">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -292,70 +328,42 @@ export const PropertyExpensesModal: React.FC<PropertyExpensesModalProps> = ({
                     <span>{isEn ? 'Expense Category' : 'Categoría del Gasto'} *</span>
                   </label>
 
-                  {!isCreatingCategory && (
-                    <button
-                      type="button"
-                      onClick={() => setIsCreatingCategory(true)}
-                      className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <FolderPlus className="w-3 h-3" />
-                      <span>{isEn ? '+ Define new category' : '+ Definir nueva categoría'}</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCategoryModalOpen(true);
+                      setCategoryModalError(null);
+                      setCategoryToDeleteConfirm(null);
+                    }}
+                    className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5" />
+                    <span>{isEn ? '+ Manage / Add categories' : '+ Definir o gestionar categorías'}</span>
+                  </button>
                 </div>
 
-                {isCreatingCategory ? (
-                  <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-rose-400 space-y-2">
-                    <label className="block text-[11px] font-bold text-rose-700 dark:text-rose-300">
-                      {isEn ? 'New Category Name (will be saved for future expenses):' : 'Nombre de la nueva categoría (se guardará para futuros gastos):'}
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        autoFocus
-                        placeholder={isEn ? 'e.g. Gardening, Waterproofing...' : 'Ej: Jardinería, Fumigación, Impermeabilización...'}
-                        value={newCategoryName}
-                        onChange={(e) => setNewCategoryName(e.target.value)}
-                        className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSaveNewCategory}
-                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                      >
-                        {isEn ? 'Save' : 'Guardar'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsCreatingCategory(false)}
-                        className="px-2.5 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs transition cursor-pointer"
-                      >
-                        {isEn ? 'Cancel' : 'Cancelar'}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <select
-                    value={category}
-                    onChange={(e) => {
-                      if (e.target.value === '__new__') {
-                        setIsCreatingCategory(true);
-                      } else {
-                        setCategory(e.target.value);
-                      }
-                    }}
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
-                  >
-                    {expenseCategories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                    <option value="__new__">
-                      {isEn ? '➕ + Define new category...' : '➕ + Definir nueva categoría...'}
+                <select
+                  value={category}
+                  onChange={(e) => {
+                    if (e.target.value === '__manage__') {
+                      setIsCategoryModalOpen(true);
+                      setCategoryModalError(null);
+                      setCategoryToDeleteConfirm(null);
+                    } else {
+                      setCategory(e.target.value);
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-rose-500 focus:outline-hidden cursor-pointer"
+                >
+                  {expenseCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
                     </option>
-                  </select>
-                )}
+                  ))}
+                  <option value="__manage__">
+                    {isEn ? '⚙️ ➕ Manage or add categories...' : '⚙️ ➕ Definir o gestionar categorías...'}
+                  </option>
+                </select>
               </div>
 
               {/* Description / Detail */}
@@ -588,6 +596,205 @@ export const PropertyExpensesModal: React.FC<PropertyExpensesModalProps> = ({
         </div>
 
       </div>
+
+        {/* Category Management Emergent Modal (Ventana Emergente de Categorías) */}
+        {isCategoryModalOpen && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-xs animate-fade-in">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] relative animate-scale-up">
+              
+              {/* Header */}
+              <div className="p-4 sm:p-5 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-500/10 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 border border-rose-500/30">
+                    <FolderPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
+                      {isEn ? 'Manage Expense Categories' : 'Gestionar Categorías de Gastos'}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {isEn
+                        ? 'Add new custom categories or delete existing ones'
+                        : 'Agrega nuevas categorías o elimina las que ya no utilices'}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCategoryModalOpen(false);
+                    setCategoryToDeleteConfirm(null);
+                    setCategoryModalError(null);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
+                
+                {/* Form to Add New Category */}
+                <form onSubmit={handleAddCategoryFromModal} className="space-y-2 bg-rose-500/5 dark:bg-rose-950/20 p-3.5 rounded-2xl border border-rose-200 dark:border-rose-900/40">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5 text-rose-500" />
+                    <span>{isEn ? 'Add New Category' : 'Agregar Nueva Categoría'}</span>
+                  </label>
+
+                  {categoryModalError && (
+                    <div className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{categoryModalError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder={
+                        isEn
+                          ? 'e.g. Gardening, Pest Control, Waterproofing...'
+                          : 'Ej: Jardinería, Fumigación, Impermeabilización...'
+                      }
+                      value={modalNewCategoryName}
+                      onChange={(e) => {
+                        setModalNewCategoryName(e.target.value);
+                        if (categoryModalError) setCategoryModalError(null);
+                      }}
+                      className="flex-1 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-900 dark:text-white focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow-xs"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{isEn ? 'Add' : 'Agregar'}</span>
+                    </button>
+                  </div>
+                </form>
+
+                {/* Existing Categories List */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                      {isEn ? 'Existing Categories' : 'Categorías Creadas'} ({expenseCategories.length})
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {isEn ? 'Click to select for current expense' : 'Haz clic para seleccionar en el gasto actual'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                    {expenseCategories.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic py-3 text-center">
+                        {isEn ? 'No categories available' : 'No hay categorías creadas'}
+                      </p>
+                    ) : (
+                      expenseCategories.map((catName) => {
+                        const isSelected = category === catName;
+                        const isDeletingConfirm = categoryToDeleteConfirm === catName;
+                        const usageCount = expenses.filter((e) => e.category === catName).length;
+
+                        return (
+                          <div
+                            key={catName}
+                            className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+                              isSelected
+                                ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800'
+                                : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/80 hover:border-slate-300 dark:hover:border-slate-600'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <Tag className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`} />
+                              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                {catName}
+                              </span>
+                              {isSelected && (
+                                <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-rose-200 dark:bg-rose-900 text-rose-800 dark:text-rose-200 shrink-0">
+                                  {isEn ? 'Selected' : 'Seleccionada'}
+                                </span>
+                              )}
+                              {usageCount > 0 && (
+                                <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                                  ({usageCount} {usageCount === 1 ? (isEn ? 'expense' : 'gasto') : (isEn ? 'expenses' : 'gastos')})
+                                </span>
+                              )}
+                            </div>
+
+                            {isDeletingConfirm ? (
+                              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-lg border border-rose-300 dark:border-rose-800 shrink-0">
+                                <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 px-1">
+                                  {isEn ? 'Delete?' : '¿Eliminar?'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCategoryFromModal(catName)}
+                                  className="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px] font-bold hover:bg-rose-500 cursor-pointer"
+                                >
+                                  {isEn ? 'Yes' : 'Sí'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCategoryToDeleteConfirm(null)}
+                                  className="px-1.5 py-0.5 text-slate-500 dark:text-slate-400 text-[10px] hover:text-slate-700 cursor-pointer"
+                                >
+                                  {isEn ? 'No' : 'No'}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCategory(catName);
+                                    setIsCategoryModalOpen(false);
+                                  }}
+                                  className="px-2.5 py-1 text-[11px] font-bold bg-slate-200 dark:bg-slate-700 hover:bg-rose-600 hover:text-white text-slate-700 dark:text-slate-200 rounded-lg transition cursor-pointer"
+                                >
+                                  {isEn ? 'Usar' : 'Usar'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setCategoryToDeleteConfirm(catName)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-lg transition cursor-pointer"
+                                  title={isEn ? 'Delete category' : 'Eliminar categoría'}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-xs shrink-0">
+                <span className="text-[11px] text-slate-400">
+                  {expenseCategories.length} {isEn ? 'total categories' : 'categorías en total'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCategoryModalOpen(false);
+                    setCategoryToDeleteConfirm(null);
+                  }}
+                  className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold transition cursor-pointer"
+                >
+                  {isEn ? 'Done' : 'Listo'}
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
     </div>
   );
 };
