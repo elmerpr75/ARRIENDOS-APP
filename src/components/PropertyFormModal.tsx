@@ -174,10 +174,21 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       setError('Por favor especifica una cantidad de renta válida.');
       return;
     }
-    if (!tenant1Name.trim() || !tenant1Phone.trim()) {
-      setError('El Inquilino 1 requiere al menos nombre completo y teléfono de contacto.');
+    const isVacant =
+      tenant1Name.trim().toLowerCase().includes('vacante') ||
+      propertyStatus === 'vacante' ||
+      propertyStatus === 'en_mantenimiento';
+
+    if (!tenant1Name.trim()) {
+      setError('El Inquilino 1 requiere al menos nombre completo (o escribir "Vacante" si la propiedad aún no está rentada).');
       return;
     }
+
+    if (!isVacant && !tenant1Phone.trim()) {
+      setError('El Inquilino 1 requiere al menos teléfono de contacto.');
+      return;
+    }
+
     if (!contractEndDate) {
       setError('Por favor especifica la fecha de vencimiento o renovación de contrato.');
       return;
@@ -185,7 +196,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
 
     const tenant1: Tenant = {
       name: tenant1Name.trim(),
-      phone: tenant1Phone.trim(),
+      phone: tenant1Phone.trim() || (isVacant ? 'N/A' : ''),
       email: tenant1Email.trim() || undefined,
       idNumber: tenant1Id.trim() || undefined,
     };
@@ -735,31 +746,18 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Botón Aplica / No Aplica */}
-                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200 dark:bg-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => setUtilitiesWaterActive(true)}
-                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
-                        utilitiesWaterActive
-                          ? 'bg-sky-600 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                      }`}
-                    >
-                      Aplica
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setUtilitiesWaterActive(false)}
-                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
-                        !utilitiesWaterActive
-                          ? 'bg-slate-400 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                      }`}
-                    >
-                      No
-                    </button>
-                  </div>
+                  {/* Botón de Alternancia Aplica/No Aplica */}
+                  <button
+                    type="button"
+                    onClick={() => setUtilitiesWaterActive(!utilitiesWaterActive)}
+                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition ${
+                      utilitiesWaterActive
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-rose-600 text-white shadow-xs'
+                    }`}
+                  >
+                    {utilitiesWaterActive ? 'Aplica' : 'No Aplica'}
+                  </button>
                 </div>
 
                 {utilitiesWaterActive && (
@@ -804,31 +802,18 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Botón Aplica / No Aplica */}
-                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200 dark:bg-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => setUtilitiesElectricActive(true)}
-                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
-                        utilitiesElectricActive
-                          ? 'bg-amber-600 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                      }`}
-                    >
-                      Aplica
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setUtilitiesElectricActive(false)}
-                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
-                        !utilitiesElectricActive
-                          ? 'bg-slate-400 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                      }`}
-                    >
-                      No
-                    </button>
-                  </div>
+                  {/* Botón de Alternancia Aplica/No Aplica */}
+                  <button
+                    type="button"
+                    onClick={() => setUtilitiesElectricActive(!utilitiesElectricActive)}
+                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition ${
+                      utilitiesElectricActive
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-rose-600 text-white shadow-xs'
+                    }`}
+                  >
+                    {utilitiesElectricActive ? 'Aplica' : 'No Aplica'}
+                  </button>
                 </div>
 
                 {utilitiesElectricActive && (
@@ -873,31 +858,18 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Botón Aplica / No Aplica */}
-                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200 dark:bg-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => setUtilitiesMaintenanceActive(true)}
-                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
-                        utilitiesMaintenanceActive
-                          ? 'bg-purple-600 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                      }`}
-                    >
-                      Aplica
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setUtilitiesMaintenanceActive(false)}
-                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition ${
-                        !utilitiesMaintenanceActive
-                          ? 'bg-slate-400 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                      }`}
-                    >
-                      No
-                    </button>
-                  </div>
+                  {/* Botón de Alternancia Aplica/No Aplica */}
+                  <button
+                    type="button"
+                    onClick={() => setUtilitiesMaintenanceActive(!utilitiesMaintenanceActive)}
+                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition ${
+                      utilitiesMaintenanceActive
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-rose-600 text-white shadow-xs'
+                    }`}
+                  >
+                    {utilitiesMaintenanceActive ? 'Aplica' : 'No Aplica'}
+                  </button>
                 </div>
 
                 {utilitiesMaintenanceActive && (
@@ -977,10 +949,13 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                   type="text"
                   value={tenant1Name}
                   onChange={(e) => setTenant1Name(e.target.value)}
-                  placeholder="Ej: Carlos Mendoza Silva"
+                  placeholder="Ej: Carlos Mendoza Silva / Vacante"
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
                   required
                 />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 block">
+                  Si la propiedad aún no está rentada o está disponible, puedes ingresar <strong>Vacante</strong>.
+                </span>
               </div>
 
               <div>

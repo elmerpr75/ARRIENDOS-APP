@@ -261,13 +261,12 @@ export function generatePropertyHistoricalData(
   const refMonth = targetEnd.getMonth();
 
   // Find true earliest date among contract start date and all recorded payments
+  // Find contract start date as strict baseline for tenant contractual obligations
   const contractStart = parseLocalDate(property.contractStartDate);
   const hasContractStart = !isNaN(contractStart.getTime());
 
   let earliestTime: number;
-  if (hasContractStart && earliestPaymentTime !== null) {
-    earliestTime = Math.min(contractStart.getTime(), earliestPaymentTime);
-  } else if (hasContractStart) {
+  if (hasContractStart) {
     earliestTime = contractStart.getTime();
   } else if (earliestPaymentTime !== null) {
     earliestTime = earliestPaymentTime;
@@ -275,6 +274,11 @@ export function generatePropertyHistoricalData(
     // Default fallback: 1 year prior to refDate
     earliestTime = new Date(refYear - 1, refMonth, 1).getTime();
   }
+
+  // Filter payments for current tenant (on or after contract start date)
+  const tenantPropPayments = hasContractStart
+    ? propPayments.filter((p) => parseLocalDate(p.date).getTime() >= contractStart.getTime())
+    : propPayments;
 
   const earliestDate = new Date(earliestTime);
   let startYear = earliestDate.getFullYear();
@@ -293,7 +297,7 @@ export function generatePropertyHistoricalData(
   let rentRunning = 0;
 
   if (includeRent) {
-    // Collect all rent and late fee payments for this property
+    // Collect all rent and late fee payments for current tenant
     const rentPaymentsList: Array<{
       id: string;
       date: string;
@@ -302,7 +306,7 @@ export function generatePropertyHistoricalData(
       pay: Payment;
     }> = [];
 
-    for (const pay of propPayments) {
+    for (const pay of tenantPropPayments) {
       const rAmt = Number(pay.appliedToRent) || (pay.concept === 'renta' ? Number(pay.amount) : 0);
       const lateAmt = Number(pay.appliedToLateFees) || (pay.concept === 'mora' ? Number(pay.amount) : 0);
       const isGeneric = (!pay.concept || pay.concept === 'general') &&

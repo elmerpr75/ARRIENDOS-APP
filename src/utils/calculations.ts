@@ -150,19 +150,37 @@ export function computeMonthlyLateFee(
     };
   }
 
+  // Check if evaluationDate or cycle is before contractStartDate
+  if (property.contractStartDate) {
+    const contractStart = parseLocalDate(property.contractStartDate);
+    if (!isNaN(contractStart.getTime())) {
+      const contractStartMidnight = new Date(contractStart.getFullYear(), contractStart.getMonth(), contractStart.getDate(), 0, 0, 0, 0);
+      const evalMidnight = new Date(evaluationDate.getFullYear(), evaluationDate.getMonth(), evaluationDate.getDate(), 0, 0, 0, 0);
+      if (evalMidnight.getTime() < contractStartMidnight.getTime()) {
+        return {
+          isOverdue: false,
+          daysOverdue: 0,
+          effectiveDailyDays: 0,
+          lateFeeBase: 0,
+          lateFeeDaily: 0,
+          totalLateFee: 0,
+        };
+      }
+    }
+  }
+
   // Due date for the specific cycle
   const lastDayOfCycleMonth = new Date(year, month + 1, 0).getDate();
   const clampedDueDay = Math.min(dueDay, lastDayOfCycleMonth);
-  const dueDate = new Date(year, month, clampedDueDay, 0, 0, 0, 0);
 
-  // Grace date (inclusive deadline):
-  // E.g. Due day 15 + grace 5 days = end of day 20 (up to 20th included without penalty).
+  // Grace date: Due day counts as Day 1 of grace.
+  // E.g. Due day 5 + 3 grace days -> Days 5, 6, 7 are penalty-free. Penalty starts on Day 8 (5 + 3 = 8th 00:00:00).
   const graceDays = Math.max(0, Number(property.graceDays) ?? 3);
-  const graceMidnightMs = new Date(year, month, clampedDueDay + graceDays, 0, 0, 0, 0).getTime();
+  const graceEndMidnightMs = new Date(year, month, clampedDueDay + Math.max(1, graceDays), 0, 0, 0, 0).getTime();
   const evalMidnight = new Date(evaluationDate.getFullYear(), evaluationDate.getMonth(), evaluationDate.getDate(), 0, 0, 0, 0).getTime();
 
-  // If on or before grace date (or before due date), NOT overdue
-  if (evalMidnight <= graceMidnightMs) {
+  // If on or before grace date, NOT overdue
+  if (evalMidnight < graceEndMidnightMs) {
     return {
       isOverdue: false,
       daysOverdue: 0,
@@ -174,7 +192,7 @@ export function computeMonthlyLateFee(
   }
 
   // Days overdue strictly beyond the grace period
-  const diffDays = Math.max(1, Math.round((evalMidnight - graceMidnightMs) / (1000 * 60 * 60 * 24)));
+  const diffDays = Math.max(1, Math.round((evalMidnight - graceEndMidnightMs) / (1000 * 60 * 60 * 24)) + 1);
   const daysOverdue = diffDays;
 
   let effectiveDailyDays = daysOverdue;
@@ -244,21 +262,42 @@ export function calculatePropertyStatus(
   const currentYear = refDateLocal.getFullYear();
   const currentMonth = refDateLocal.getMonth(); // 0-11
   
+  // Parse contract start date as tenant baseline
+  const contractStart = parseLocalDate(property.contractStartDate);
+  const hasContractStart = Boolean(property.contractStartDate && !isNaN(contractStart.getTime()));
+  const contractStartMidnight = hasContractStart
+    ? new Date(contractStart.getFullYear(), contractStart.getMonth(), contractStart.getDate(), 0, 0, 0, 0)
+    : null;
+
+  // Filter payments belonging strictly to current tenant (on or after contract start date)
+  const propPayments = payments.filter((p) => p.propertyId === property.id);
+  const tenantPayments = propPayments.filter((p) => {
+    if (!contractStartMidnight) return true;
+    const pDate = parseLocalDate(p.date);
+    return pDate.getTime() >= contractStartMidnight.getTime();
+  });
+
+  // Check if reference date is BEFORE contract start date
+  const isBeforeContractStart = contractStartMidnight ? refDateLocal.getTime() < contractStartMidnight.getTime() : false;
+
   // Due date for current month
-  // If rentDueDay exceeds month days, clamp to last day of month
   const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  const dueDay = Math.min(property.rentDueDay || 1, lastDayOfMonth);
+  const rawDueDay = Math.min(property.rentDueDay || 1, lastDayOfMonth);
+
+  // If current month is contract start month, due day cannot be before contract start day
+  let dueDay = rawDueDay;
+  if (hasContractStart && contractStartMidnight && contractStartMidnight.getFullYear() === currentYear && contractStartMidnight.getMonth() === currentMonth) {
+    dueDay = Math.max(contractStartMidnight.getDate(), rawDueDay);
+  }
+
   const currentDueDate = new Date(currentYear, currentMonth, dueDay, 0, 0, 0, 0);
-  
-  // Format due date YYYY-MM-DD
   const dueDateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
 
-  // Grace date (inclusive):
-  // E.g. Due day 15 + grace 5 days = end of day 20 (penalty-free through day 20).
+  // Grace date (inclusive): Due day counts as Day 1 of grace.
   const graceDays = Math.max(0, property.graceDays ?? 3);
-  const graceMidnightMs = new Date(currentYear, currentMonth, dueDay + graceDays, 0, 0, 0, 0).getTime();
+  const graceEndMidnightMs = new Date(currentYear, currentMonth, dueDay + Math.max(1, graceDays), 0, 0, 0, 0).getTime();
 
-  // Contract calculation
+  // Contract days left calculation
   const contractEnd = parseLocalDate(property.contractEndDate);
   const contractDaysLeft = getDaysDifference(contractEnd, refDateLocal);
   
@@ -269,36 +308,33 @@ export function calculatePropertyStatus(
     contractStatus = 'por_renovar';
   }
 
-  // Filter payments for this property
-  const propPayments = payments.filter((p) => p.propertyId === property.id);
-  const totalAllPayments = propPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const totalAllPayments = tenantPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   
   // Sort payments by date descending
-  const sortedPayments = [...propPayments].sort(
+  const sortedPayments = [...tenantPayments].sort(
     (a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime()
   );
   const lastPayment = sortedPayments[0];
 
   // Current period payments (matching year and month or period name)
   const currentPeriod = getCurrentPeriodName(refDateLocal);
-  const paymentsThisMonth = propPayments.filter((p) => {
+  const paymentsThisMonth = tenantPayments.filter((p) => {
     if (p.period && p.period.toLowerCase().trim() === currentPeriod.toLowerCase().trim()) return true;
     const pDate = parseLocalDate(p.date);
     return pDate.getFullYear() === currentYear && pDate.getMonth() === currentMonth;
   });
   const totalPaidThisMonth = paymentsThisMonth.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
-  // Check if reference date has reached or passed the agreed monthly rent due day:
-  // e.g. If due day is the 15th, before the 15th (days 1-14) the current month's rent has NOT yet matured/exigible.
+  // Check if reference date has reached or passed the agreed monthly rent due day and contract start:
   const evalMidnight = refDateLocal.getTime();
   const dueMidnight = currentDueDate.getTime();
-  const isRentDueReached = evalMidnight >= dueMidnight;
+  const isRentDueReached = !isBeforeContractStart && evalMidnight >= dueMidnight;
 
-  // Is within contractual grace period (e.g. days 15-20 when due day is 15 with 5 grace days)?
-  const isWithinGrace = isRentDueReached && evalMidnight <= graceMidnightMs;
+  // Is within contractual grace period (penalty-free)?
+  const isWithinGrace = isRentDueReached && evalMidnight < graceEndMidnightMs;
 
   const propStatus = property.status || 'rentado';
-  const isAccruingRentAndLateFees = propStatus === 'rentado' || propStatus === 'en_proceso_legal';
+  const isAccruingRentAndLateFees = !isBeforeContractStart && (propStatus === 'rentado' || propStatus === 'en_proceso_legal');
   const currentActiveRent = isAccruingRentAndLateFees ? getPropertyRentForDate(property, refDateLocal) : 0;
   const currentMonthRentCharge = isRentDueReached ? currentActiveRent : 0;
 
@@ -309,10 +345,10 @@ export function calculatePropertyStatus(
   const totalUtilitiesAmount = waterAmount + electricAmount + maintenanceAmount;
   const totalBilledThisMonth = currentMonthRentCharge + totalUtilitiesAmount;
 
-  // Segregated breakdown of all-time payments for deposit and rent tracking:
+  // Segregated breakdown of all-time payments for deposit and rent tracking for current tenant:
   let totalDepositPaid = 0;
   let totalRentPaidAllTime = 0;
-  for (const pay of propPayments) {
+  for (const pay of tenantPayments) {
     const amt = Number(pay.amount) || 0;
     if (pay.appliedToRent !== undefined || pay.appliedToLateFees !== undefined ||
         pay.appliedToWater !== undefined || pay.appliedToElectric !== undefined ||
@@ -351,7 +387,6 @@ export function calculatePropertyStatus(
       paidMaintenanceThisMonth += Number(pay.appliedToMaintenance) || 0;
       paidDepositThisMonth += Number(pay.appliedToDeposit) || 0;
     } else {
-      // Legacy or unpartitioned payment: attribute according to pay.concept
       if (pay.concept === 'agua') {
         paidWaterThisMonth += amt;
       } else if (pay.concept === 'electricidad') {
@@ -363,30 +398,22 @@ export function calculatePropertyStatus(
       } else if (pay.concept === 'mora') {
         paidLateFeesThisMonth += amt;
       } else {
-        // Default to rent
         paidRentThisMonth += amt;
       }
     }
   }
 
-  // Prior rent balance and credit calculation:
-  // Evaluates all completed billing cycles prior to currentYear / currentMonth.
+  // Prior rent balance calculation strictly under THIS contract (since contractStartDate):
   let previousBalance = 0;
   let priorRentCredit = 0;
-  const contractStart = parseLocalDate(property.contractStartDate);
 
-  if (!isNaN(contractStart.getTime())) {
-    const startYear = contractStart.getFullYear();
-    const startMonth = contractStart.getMonth();
-    const startDay = contractStart.getDate();
+  if (hasContractStart && contractStartMidnight && !isBeforeContractStart) {
+    const startYear = contractStartMidnight.getFullYear();
+    const startMonth = contractStartMidnight.getMonth();
 
-    // Check how many prior billing cycles existed before currentYear / currentMonth
     const diffMonths = (currentYear - startYear) * 12 + (currentMonth - startMonth);
-    const adjustedDiffMonths = startDay > dueDay ? Math.max(0, diffMonths - 1) : Math.max(0, diffMonths);
-
-    if (adjustedDiffMonths > 0) {
-      // Prior rent payments (excluding current month payments and excluding deposits and utilities)
-      const priorRentPayments = propPayments
+    if (diffMonths > 0) {
+      const priorRentPayments = tenantPayments
         .filter((p) => {
           const pDate = parseLocalDate(p.date);
           const isThisMonth = pDate.getFullYear() === currentYear && pDate.getMonth() === currentMonth;
@@ -404,13 +431,18 @@ export function calculatePropertyStatus(
       let remainingPriorRent = priorRentPayments;
       let accumulatedPriorBilled = 0;
 
-      for (let m = 0; m < adjustedDiffMonths; m++) {
-        const totalMonthIndex = (startDay > dueDay ? startMonth + 1 : startMonth) + m;
+      for (let m = 0; m < diffMonths; m++) {
+        const totalMonthIndex = startMonth + m;
         const pastYear = startYear + Math.floor(totalMonthIndex / 12);
         const pastMonth = totalMonthIndex % 12;
-        const cycleDateForPast = new Date(pastYear, pastMonth, dueDay);
-        const pastPropStatus = property.status || 'rentado';
-        const pastIsAccruing = pastPropStatus === 'rentado' || pastPropStatus === 'en_proceso_legal';
+
+        const pastLastDay = new Date(pastYear, pastMonth + 1, 0).getDate();
+        const pastDueDay = (m === 0 && contractStartMidnight.getDate() > property.rentDueDay)
+          ? Math.min(contractStartMidnight.getDate(), pastLastDay)
+          : Math.min(property.rentDueDay || 1, pastLastDay);
+
+        const cycleDateForPast = new Date(pastYear, pastMonth, pastDueDay);
+        const pastIsAccruing = isAccruingRentAndLateFees;
         const monthlyRent = pastIsAccruing ? getPropertyRentForDate(property, cycleDateForPast) : 0;
 
         if (remainingPriorRent >= monthlyRent) {
@@ -422,7 +454,7 @@ export function calculatePropertyStatus(
           const pastMonthEnd = new Date(pastYear, pastMonth + 1, 0, 0, 0, 0, 0);
           const pastLateResult = pastIsAccruing ? computeMonthlyLateFee(
             property,
-            dueDay,
+            pastDueDay,
             pastYear,
             pastMonth,
             pastMonthEnd,
@@ -442,21 +474,13 @@ export function calculatePropertyStatus(
     }
   }
 
-  // Total rent coverage available for the current month:
-  // Includes any credit / advance payment carried over from previous months plus payments made this month
+  // Total rent coverage available for current month
   const totalRentCoverageThisMonth = priorRentCredit + paidRentThisMonth;
 
-  // Determine late fee for current month:
-  // Evaluated ONLY IF:
-  // 1. Rent due day has arrived (isRentDueReached)
-  // 2. We have EXCEEDED the contractual grace period (!isWithinGrace, evalMidnight > graceMidnightMs)
-  // 3. The tenant does NOT have credit or zero balance: there is an actual remaining unpaid rent
   const pendingRentUnadjusted = isRentDueReached
     ? Math.max(0, currentActiveRent + previousBalance - totalRentCoverageThisMonth)
     : Math.max(0, previousBalance - (totalRentCoverageThisMonth > currentActiveRent ? totalRentCoverageThisMonth - currentActiveRent : 0));
 
-  // If the tenant maintains zero balance or credit (priorRentCredit >= currentMonthRentCharge or totalRentCoverage >= charge),
-  // NO LATE FEE CAN BE CHARGED!
   const hasZeroOrCreditBalance = isRentDueReached
     ? totalRentCoverageThisMonth >= currentActiveRent && previousBalance === 0
     : previousBalance === 0;
