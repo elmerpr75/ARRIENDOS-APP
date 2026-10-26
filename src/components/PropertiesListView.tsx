@@ -551,6 +551,11 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                                 {property.tenant1.idNumber}
                               </p>
                             )}
+                            {property.tenant1.email && (
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Email: {property.tenant1.email}
+                              </p>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -577,7 +582,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                             className={`pt-2 border-t border-slate-200 dark:border-slate-700 flex items-start justify-between gap-2 p-1.5 rounded-lg transition ${
                               isT2Match
                                 ? 'bg-sky-100/70 dark:bg-sky-950/60 ring-1 ring-sky-300 dark:ring-sky-800'
-                              : ''
+                                : ''
                             }`}
                           >
                             <div>
@@ -599,6 +604,11 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                                   {property.tenant2.idNumber}
                                 </p>
                               )}
+                              {property.tenant2.email && (
+                                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                  Email: {property.tenant2.email}
+                                </p>
+                              )}
                             </div>
 
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -615,6 +625,17 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                           </div>
                         );
                       })()}
+
+                    {/* Día acordado de pago */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-300">
+                      <span className="font-bold flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                        <span>Día de pago acordado:</span>
+                      </span>
+                      <span className="font-black text-slate-900 dark:text-white bg-sky-100 dark:bg-sky-950/60 px-2 py-0.5 rounded-md">
+                        Día {property.rentDueDay} de cada mes
+                      </span>
+                    </div>
 
                     {/* Cláusula de Demora y Tope Máximo por Contrato */}
                     <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
