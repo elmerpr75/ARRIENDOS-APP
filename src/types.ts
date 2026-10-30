@@ -97,6 +97,21 @@ export interface Property {
   lateFeeCapType?: 'amount' | 'days'; // Tipo de tope: 'amount' (monto monetario máximo) o 'days' (cantidad máxima de días a computar tras gracia)
   lateFeeMaxAmount?: number; // Monto máximo de penalidad por morosidad por mes (ej: $75)
   lateFeeMaxDays?: number; // Cantidad máxima de días de retraso imputables en el mes tras gracia (ej: 10 días)
+
+  // Estatus específico por período histórico (YYYY-MM -> PropertyStatus)
+  periodStatuses?: Record<string, PropertyStatus>;
+
+  // Registro histórico de utilidades variables mensuales (YYYY-MM -> { waterAmount, electricAmount, maintenanceAmount })
+  periodUtilities?: Record<string, PeriodUtilityRecord>;
+}
+
+export interface PeriodUtilityRecord {
+  waterAmount?: number;
+  waterBillingDate?: string; // YYYY-MM-DD
+  electricAmount?: number;
+  electricBillingDate?: string; // YYYY-MM-DD
+  maintenanceAmount?: number;
+  maintenanceBillingDate?: string; // YYYY-MM-DD
 }
 
 export type PaymentMethod = 'transferencia' | 'ath_movil' | 'efectivo' | 'deposito' | 'cheque' | 'tarjeta' | 'otro';
@@ -221,6 +236,7 @@ export interface PropertyFinancialStatus {
   pendingElectricBalance: number; // Saldo pendiente Electricidad LUMA / AEE
   pendingMaintenanceBalance: number; // Saldo pendiente Mantenimiento / Cuota de Residentes
   pendingUtilitiesBalance: number; // Agua + Electricidad + Cuota pendientes
+  priorRentCredit?: number; // Crédito o abonos previos a favor acumulados para este ciclo
 }
 
 export interface InvoiceData {

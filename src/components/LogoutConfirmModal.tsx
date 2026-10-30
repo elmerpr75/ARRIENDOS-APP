@@ -12,6 +12,7 @@ import {
   FolderCheck,
 } from 'lucide-react';
 import { SupportedLanguage } from '../utils/i18n';
+import { exportAppData } from '../utils/storage';
 
 import { hasValidAccessToken } from '../utils/firebaseAuth';
 
@@ -53,12 +54,37 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
       await onConfirmLogout(choice);
     } catch (err: any) {
       console.error('Logout / backup error:', err);
-      setErrorMessage(
-        err?.message ||
-          (isEn
-            ? 'Could not connect to Google Drive or sign out.'
-            : 'No se pudo completar el respaldo en Google Drive.')
-      );
+      if (choice === 'gdrive') {
+        try {
+          const dataStr = exportAppData();
+          const blob = new Blob([dataStr], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `arriendos-respaldo-emergencia-${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+
+          setErrorMessage(
+            isEn
+              ? 'Could not connect to Google Drive. As a safety measure, a local backup (.JSON) was automatically generated and downloaded to your device downloads folder.'
+              : '⚠️ No se pudo conectar con Google Drive. Como medida de seguridad, se ha generado y descargado automáticamente una copia de respaldo local (JSON) en su dispositivo (carpeta de Descargas).'
+          );
+        } catch (localErr) {
+          setErrorMessage(
+            err?.message || (isEn ? 'Could not connect to Google Drive.' : 'No se pudo completar el respaldo en Google Drive.')
+          );
+        }
+      } else {
+        setErrorMessage(
+          err?.message ||
+            (isEn
+              ? 'Could not complete backup or sign out.'
+              : 'No se pudo completar el respaldo o cierre de sesión.')
+        );
+      }
       setIsProcessing(false);
     }
   };

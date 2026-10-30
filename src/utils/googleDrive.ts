@@ -98,6 +98,10 @@ export async function listBackupsFromDrive(
         throw new Error('AUTH_EXPIRED: Token de Google Drive expirado o no autorizado.');
       }
 
+      if (res.status === 403) {
+        throw new Error('AUTH_INSUFFICIENT_SCOPES: Permisos insuficientes para acceder a Google Drive.');
+      }
+
       if (!res.ok) {
         break;
       }
@@ -313,6 +317,9 @@ export async function uploadBackupToDrive(
       }
     } catch {
       message = `${message} (${errorText})`;
+    }
+    if (response.status === 403 || message.includes('insufficient') || message.includes('scopes')) {
+      throw new Error(`AUTH_INSUFFICIENT_SCOPES: ${message}`);
     }
     throw new Error(message);
   }

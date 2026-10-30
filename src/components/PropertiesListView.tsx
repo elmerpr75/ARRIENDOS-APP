@@ -74,6 +74,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
   const [adminFilter, setAdminFilter] = useState<string>('all');
   const [propertyToDelete, setPropertyToDelete] = useState<Property | null>(null);
   const [selectingAdminForProp, setSelectingAdminForProp] = useState<Property | null>(null);
+  const [viewingPaymentsProp, setViewingPaymentsProp] = useState<Property | null>(null);
 
   // Quick Utilities editing state
   const [editingUtilitiesProp, setEditingUtilitiesProp] = useState<Property | null>(null);
@@ -673,7 +674,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                       <div>
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                           <Sliders className="w-3.5 h-3.5 text-sky-500" />
-                          Factura de Utilidades (Consumo Mes Anterior)
+                          Factura de Utilidades (Consumo mas reciente)
                         </span>
                         <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
                           Costo según factura recibida del proveedor
@@ -846,33 +847,14 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                 {/* Card Action Buttons Bar */}
                 <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {(() => {
-                      const isTrulyPaid = (status.paidRentThisMonth || 0) >= property.rentAmount;
-                      const buttonLabel = isTrulyPaid
-                        ? 'Recibo'
-                        : !status.isRentDueReached && status.totalPendingBalance > 0
-                        ? 'Factura Utilidades'
-                        : 'Factura Actual';
-                      const buttonBg = isTrulyPaid
-                        ? 'bg-emerald-600 hover:bg-emerald-500'
-                        : 'bg-sky-600 hover:bg-sky-500';
-                      const buttonTitle = isTrulyPaid
-                        ? 'Generar Recibo de pago liquidado del mes actual'
-                        : !status.isRentDueReached
-                        ? `Generar Factura / Estado de Cuenta actual (Ciclo de renta inicia el día ${property.rentDueDay})`
-                        : 'Generar Factura del mes actual';
-
-                      return (
-                        <button
-                          onClick={() => onOpenInvoice(status, 'current')}
-                          className={`px-3 py-1.5 rounded-xl font-semibold flex items-center gap-1 transition shadow-xs text-white cursor-pointer ${buttonBg}`}
-                          title={buttonTitle}
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>{buttonLabel}</span>
-                        </button>
-                      );
-                    })()}
+                    <button
+                      onClick={() => onOpenInvoice(status, 'current')}
+                      className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-semibold flex items-center gap-1 transition shadow-xs cursor-pointer"
+                      title="Generar Factura Actual"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Factura Actual</span>
+                    </button>
                     <button
                       onClick={() => onOpenInvoice(status, 'next_month')}
                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold flex items-center gap-1 transition shadow-xs cursor-pointer"
@@ -930,21 +912,21 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                       </button>
                     )}
 
-                    {onEditPayment && payments.some((p) => p.propertyId === property.id) && (
-                      <button
-                        onClick={() => {
-                          const propPays = payments.filter((p) => p.propertyId === property.id);
-                          onEditPayment(propPays[0]);
-                        }}
-                        className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-xl font-semibold flex items-center gap-1 transition text-xs cursor-pointer"
-                        title="Ver o editar pagos anteriores registrados para esta propiedad"
-                      >
-                        <Edit2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                        <span>
-                          Editar Pagos ({payments.filter((p) => p.propertyId === property.id).length})
-                        </span>
-                      </button>
-                    )}
+                    {/* Botón para ver y editar pagos registrados en ventana emergente */}
+                    <button
+                      type="button"
+                      onClick={() => setViewingPaymentsProp(property)}
+                      className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-xl font-semibold flex items-center gap-1 transition text-xs cursor-pointer"
+                      title="Ver ventana emergente con el listado de todos los pagos registrados para consultar información y editar cualquiera"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                      <span>
+                        Editar Pagos Registrados
+                        {payments.filter((p) => p.propertyId === property.id).length > 0
+                          ? ` (${payments.filter((p) => p.propertyId === property.id).length})`
+                          : ''}
+                      </span>
+                    </button>
                   </div>
 
                   <div className="flex items-center gap-1">
@@ -1067,7 +1049,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <Sliders className="w-5 h-5 text-sky-600" />
-                  Ajuste Manual de Factura de Utilidades (Consumo Mes Anterior)
+                  Ajuste Manual de Factura de Utilidades (Consumo mas reciente)
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Propiedad: <strong className="text-slate-800 dark:text-slate-200">{editingUtilitiesProp.propertyIdentifier}</strong> ({editingUtilitiesProp.address})
@@ -1237,6 +1219,214 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
                 Sí, Eliminar Propiedad
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal with List of Registered Payments for a Property */}
+      {viewingPaymentsProp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col border border-slate-200 dark:border-slate-800 overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/40">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-sky-100 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 rounded-xl">
+                  <Edit2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Pagos Registrados — {viewingPaymentsProp.propertyIdentifier}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Inquilino: <strong className="text-slate-800 dark:text-slate-200">{viewingPaymentsProp.tenant1.name}</strong> • {viewingPaymentsProp.address}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingPaymentsProp(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                title="Cerrar ventana"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            {(() => {
+              const propPays = payments
+                .filter((p) => p.propertyId === viewingPaymentsProp.id)
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+              const admin = getAdministratorForProperty(viewingPaymentsProp, administrators);
+              const totalAmountPaid = propPays.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+              return (
+                <>
+                  <div className="px-5 py-3 bg-slate-100/60 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        Total Registros: <strong className="text-slate-900 dark:text-white">{propPays.length}</strong>
+                      </span>
+                      <span className="text-slate-300 dark:text-slate-700">|</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        Total Pagado: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(totalAmountPaid, admin.currencySymbol)}</strong>
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setViewingPaymentsProp(null);
+                        onRegisterPayment(viewingPaymentsProp.id, viewingPaymentsProp.tenant1.name, 0);
+                      }}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold flex items-center gap-1 transition shadow-xs text-xs cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> + Registrar Nuevo Pago
+                    </button>
+                  </div>
+
+                  {/* Payments List Body */}
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3">
+                    {propPays.length === 0 ? (
+                      <div className="py-12 text-center text-slate-400 space-y-3">
+                        <AlertCircle className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
+                        <p className="text-sm">No hay pagos registrados para esta propiedad todavía.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewingPaymentsProp(null);
+                            onRegisterPayment(viewingPaymentsProp.id, viewingPaymentsProp.tenant1.name, 0);
+                          }}
+                          className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" /> Registrar Primer Pago
+                        </button>
+                      </div>
+                    ) : (
+                      propPays.map((p) => {
+                        return (
+                          <div
+                            key={p.id}
+                            className="p-3.5 sm:p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700 transition flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                          >
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                  {formatDate(p.date)}
+                                </span>
+                                {p.period && (
+                                  <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-md text-[11px] font-medium">
+                                    Periodo: {p.period}
+                                  </span>
+                                )}
+                                <span className="font-black text-xs text-emerald-600 dark:text-emerald-400">
+                                  {formatCurrency(p.amount, admin.currencySymbol)}
+                                </span>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                <span className="font-medium text-slate-700 dark:text-slate-300">
+                                  Pagador: {p.payerName}
+                                </span>
+                                <span>•</span>
+                                <span className="capitalize">{p.paymentMethod}</span>
+                                {p.reference && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="font-mono text-slate-600 dark:text-slate-300">Ref: {p.reference}</span>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Breakdown badges if present */}
+                              {p.breakdown && (
+                                <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px]">
+                                  {(p.breakdown.rent || 0) > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded font-semibold">
+                                      Renta: {formatCurrency(p.breakdown.rent || 0, admin.currencySymbol)}
+                                    </span>
+                                  )}
+                                  {(p.breakdown.electricity || 0) > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded font-semibold">
+                                      ⚡ Elec: {formatCurrency(p.breakdown.electricity || 0, admin.currencySymbol)}
+                                    </span>
+                                  )}
+                                  {(p.breakdown.water || 0) > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 rounded font-semibold">
+                                      💧 Agua: {formatCurrency(p.breakdown.water || 0, admin.currencySymbol)}
+                                    </span>
+                                  )}
+                                  {(p.breakdown.maintenance || 0) > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded font-semibold">
+                                      🛠 Mant: {formatCurrency(p.breakdown.maintenance || 0, admin.currencySymbol)}
+                                    </span>
+                                  )}
+                                  {(p.breakdown.lateFee || 0) > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 rounded font-semibold">
+                                      Mora: {formatCurrency(p.breakdown.lateFee || 0, admin.currencySymbol)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {p.notes && (
+                                <p className="text-[11px] text-slate-500 italic mt-0.5">
+                                  "{p.notes}"
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                              {onOpenReceipt && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setViewingPaymentsProp(null);
+                                    onOpenReceipt(p);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-xl font-semibold flex items-center gap-1 transition text-xs cursor-pointer"
+                                  title="Ver recibo de este pago"
+                                >
+                                  <Receipt className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                                  <span>Recibo</span>
+                                </button>
+                              )}
+
+                              {onEditPayment && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setViewingPaymentsProp(null);
+                                    onEditPayment(p);
+                                  }}
+                                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-semibold flex items-center gap-1 transition shadow-xs text-xs cursor-pointer"
+                                  title="Editar o ajustar toda la información de este pago y guardar cambios"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                  <span>Editar Pago</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end bg-slate-50/50 dark:bg-slate-800/40">
+                    <button
+                      type="button"
+                      onClick={() => setViewingPaymentsProp(null)}
+                      className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

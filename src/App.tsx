@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Property, Payment, LandlordProfile, PropertyFinancialStatus, Administrator, Expense } from './types';
+import { Property, Payment, LandlordProfile, PropertyFinancialStatus, Administrator, Expense, PropertyStatus } from './types';
 import {
   loadProperties,
   saveProperties,
@@ -30,6 +30,7 @@ import { TrackingView } from './components/TrackingView';
 import { RemindersView } from './components/RemindersView';
 import { StatusReportView } from './components/StatusReportView';
 import { AccountingAuditView } from './components/AccountingAuditView';
+import { UtilitiesRegistryView } from './components/UtilitiesRegistryView';
 import { PropertyExpensesModal } from './components/PropertyExpensesModal';
 import { PropertyFormModal } from './components/PropertyFormModal';
 import { PaymentModal } from './components/PaymentModal';
@@ -61,6 +62,7 @@ import {
   Bell,
   FileSpreadsheet,
   Scale,
+  Droplets,
   Settings,
   PlusCircle,
   FileText,
@@ -103,7 +105,7 @@ export default function App() {
   };
 
   // Active View Tab
-  const [activeTab, setActiveTab] = useState<'properties' | 'tracking' | 'audit' | 'reminders' | 'report'>('properties');
+  const [activeTab, setActiveTab] = useState<'properties' | 'tracking' | 'audit' | 'utilities' | 'reminders' | 'report'>('properties');
 
   // Modals
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
@@ -396,8 +398,8 @@ export default function App() {
           setLogoutNotice({ type: 'gdrive_success' });
         } catch (uploadErr: any) {
           console.warn('Google drive upload error during logout:', uploadErr);
-          // If token was expired or 401, attempt fresh re-authentication once
-          if (uploadErr?.message?.includes('AUTH_EXPIRED') || uploadErr?.message?.includes('401')) {
+          // If token was expired, 401, or missing scopes, attempt fresh re-authentication once
+          if (uploadErr?.message?.includes('AUTH_EXPIRED') || uploadErr?.message?.includes('AUTH_INSUFFICIENT_SCOPES') || uploadErr?.message?.includes('insufficient') || uploadErr?.message?.includes('401')) {
             try {
               const signResult = await googleSignIn();
               if (signResult?.accessToken) {
@@ -427,7 +429,7 @@ export default function App() {
     }
 
     try {
-      await logout();
+      await logout(false);
     } catch (e) {
       console.warn('Logout notice:', e);
     }
@@ -489,17 +491,84 @@ export default function App() {
     waterAmount: number,
     electricAmount: number,
     waterActive?: boolean,
-    electricActive?: boolean
+    electricActive?: boolean,
+    periodKey?: string
   ) => {
+    const key = periodKey || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
     const updated = properties.map((p) => {
       if (p.id !== propertyId) return p;
+      const periodUtilities = {
+        ...(p.periodUtilities || {}),
+        [key]: {
+          ...(p.periodUtilities?.[key] || {}),
+          waterAmount,
+          electricAmount,
+        },
+      };
       return {
         ...p,
         utilitiesWaterAmount: waterAmount,
         utilitiesElectricAmount: electricAmount,
         utilitiesWaterActive: waterActive !== undefined ? waterActive : p.utilitiesWaterActive,
         utilitiesElectricActive: electricActive !== undefined ? electricActive : p.utilitiesElectricActive,
+        periodUtilities,
       };
+    });
+    setProperties(updated);
+    saveProperties(updated);
+  };
+
+  const handleUpdatePeriodUtilities = (
+    propertyId: string,
+    periodKey: string,
+    utils: {
+      waterAmount?: number;
+      waterBillingDate?: string;
+      electricAmount?: number;
+      electricBillingDate?: string;
+      maintenanceAmount?: number;
+      maintenanceBillingDate?: string;
+    }
+  ) => {
+    const updated = properties.map((p) => {
+      if (p.id !== propertyId) return p;
+      const currentPeriodUtils = p.periodUtilities || {};
+      const existing = currentPeriodUtils[periodKey] || {};
+      const mergedPeriodRecord = {
+        waterAmount: utils.waterAmount !== undefined ? utils.waterAmount : existing.waterAmount,
+        waterBillingDate: utils.waterBillingDate !== undefined ? utils.waterBillingDate : existing.waterBillingDate,
+        electricAmount: utils.electricAmount !== undefined ? utils.electricAmount : existing.electricAmount,
+        electricBillingDate: utils.electricBillingDate !== undefined ? utils.electricBillingDate : existing.electricBillingDate,
+        maintenanceAmount: utils.maintenanceAmount !== undefined ? utils.maintenanceAmount : existing.maintenanceAmount,
+        maintenanceBillingDate: utils.maintenanceBillingDate !== undefined ? utils.maintenanceBillingDate : existing.maintenanceBillingDate,
+      };
+      const periodUtilities = {
+        ...currentPeriodUtils,
+        [periodKey]: mergedPeriodRecord,
+      };
+
+      const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      const isCurrentOrFuture = periodKey >= currentMonthKey;
+
+      return {
+        ...p,
+        periodUtilities,
+        ...(isCurrentOrFuture ? {
+          ...(utils.waterAmount !== undefined ? { utilitiesWaterAmount: utils.waterAmount } : {}),
+          ...(utils.electricAmount !== undefined ? { utilitiesElectricAmount: utils.electricAmount } : {}),
+          ...(utils.maintenanceAmount !== undefined ? { utilitiesMaintenanceAmount: utils.maintenanceAmount } : {}),
+        } : {}),
+      };
+    });
+    setProperties(updated);
+    saveProperties(updated);
+  };
+
+  const handleUpdatePeriodStatus = (propertyId: string, periodKey: string, status: PropertyStatus) => {
+    const updated = properties.map((p) => {
+      if (p.id !== propertyId) return p;
+      const periodStatuses = { ...(p.periodStatuses || {}), [periodKey]: status };
+      return { ...p, periodStatuses };
     });
     setProperties(updated);
     saveProperties(updated);
@@ -778,6 +847,19 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('utilities')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition ${
+              activeTab === 'utilities'
+                ? 'bg-sky-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Registro y edición histórica de costos mensuales de utilidades por propiedad"
+          >
+            <Droplets className="w-4 h-4" />
+            <span>{t.tabUtilities}</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('reminders')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition relative ${
               activeTab === 'reminders'
@@ -852,6 +934,20 @@ export default function App() {
             onOpenInvoice={handleOpenInvoice}
             onRegisterPayment={handleOpenPayment}
             canExportCode={subscriptionState.canExportCode}
+            onUpdatePeriodStatus={handleUpdatePeriodStatus}
+            onUpdatePeriodUtilities={handleUpdatePeriodUtilities}
+          />
+        )}
+
+        {activeTab === 'utilities' && (
+          <UtilitiesRegistryView
+            properties={properties}
+            payments={payments}
+            profile={profile}
+            onUpdatePeriodUtilities={handleUpdatePeriodUtilities}
+            onEditPayment={handleEditPayment}
+            onDeletePayment={handleDeletePayment}
+            onRegisterPayment={handleOpenPayment}
           />
         )}
 
@@ -911,6 +1007,16 @@ export default function App() {
         >
           <Scale className="w-5 h-5 mb-0.5 shrink-0" />
           <span>{currentLang === 'es' ? 'Libro' : 'Ledger'}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('utilities')}
+          className={`shrink-0 min-w-[58px] flex flex-col items-center py-1 px-1.5 rounded-xl transition ${
+            activeTab === 'utilities' ? 'text-sky-400 font-bold bg-sky-500/15 border border-sky-500/30' : 'hover:text-slate-200'
+          }`}
+        >
+          <Droplets className="w-5 h-5 mb-0.5 shrink-0" />
+          <span>{currentLang === 'es' ? 'Utilidades' : 'Utilities'}</span>
         </button>
 
         <button

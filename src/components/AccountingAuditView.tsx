@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Property, Payment, Administrator, LandlordProfile, Expense } from '../types';
+import { Property, Payment, Administrator, LandlordProfile, Expense, PropertyStatus } from '../types';
 import {
   calculatePropertyStatus,
   formatCurrency,
@@ -7,6 +7,8 @@ import {
   parseLocalDate,
   computeMonthlyLateFee,
   getPropertyRentForDate,
+  getPropertyUtilitiesForPeriod,
+  matchPaymentToPeriod,
 } from '../utils/calculations';
 import { getAdministratorForProperty } from '../utils/storage';
 import { downloadElementAsPdf, printElementSafely } from '../utils/pdfGenerator';
@@ -42,6 +44,7 @@ import {
   Layers,
   ArrowDownLeft,
   Scale,
+  Edit3,
 } from 'lucide-react';
 
 interface AccountingAuditViewProps {
@@ -54,12 +57,14 @@ interface AccountingAuditViewProps {
   onOpenInvoice?: (status: any, mode?: 'current' | 'next_month') => void;
   onRegisterPayment?: (propertyId: string, defaultPayer?: string, defaultAmount?: number) => void;
   canExportCode?: boolean;
+  onUpdatePeriodStatus?: (propertyId: string, periodKey: string, status: PropertyStatus) => void;
+  onUpdatePeriodUtilities?: (propertyId: string, periodKey: string, utils: { waterAmount?: number; electricAmount?: number; maintenanceAmount?: number }) => void;
 }
 
 export interface HistoricalLedgerEntry {
   id: string;
   date: string; // YYYY-MM-DD
-  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento' | 'gasto';
+  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento' | 'gasto' | 'deposito';
   conceptName: string;
   transactionTitle: string;
   obligationAmount: number | null; // Cantidad obligación contractual o gasto incurrido
@@ -74,6 +79,10 @@ export interface HistoricalLedgerEntry {
   method?: string;
   reference?: string;
   category?: string;
+  cycleYear?: number;
+  cycleMonth?: number;
+  periodKey?: string;
+  periodStatus?: PropertyStatus;
 }
 
 export interface CashflowLedgerEntry {
@@ -111,6 +120,12 @@ export interface PropertyHistoricalData {
   maintenanceTotalPayments: number;
   maintenanceFinalBalance: number;
 
+  // Depósito de Garantía Contractual
+  depositEntries: HistoricalLedgerEntry[];
+  depositTotalObligations: number;
+  depositTotalPayments: number;
+  depositFinalBalance: number;
+
   // Gastos Operativos de la Propiedad
   expenseEntries: HistoricalLedgerEntry[];
   expenseTotalAmount: number;
@@ -136,7 +151,7 @@ export interface PropertyHistoricalData {
 function applyHistoryDateFilter(
   entries: HistoricalLedgerEntry[],
   conceptName: string,
-  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento' | 'gasto',
+  conceptType: 'renta' | 'mora' | 'agua' | 'electricidad' | 'mantenimiento' | 'gasto' | 'deposito',
   startDateStr?: string,
   endDateStr?: string
 ): {
@@ -266,7 +281,9 @@ export function generatePropertyHistoricalData(
   const hasContractStart = !isNaN(contractStart.getTime());
 
   let earliestTime: number;
-  if (hasContractStart) {
+  if (hasContractStart && earliestPaymentTime !== null) {
+    earliestTime = Math.min(contractStart.getTime(), earliestPaymentTime);
+  } else if (hasContractStart) {
     earliestTime = contractStart.getTime();
   } else if (earliestPaymentTime !== null) {
     earliestTime = earliestPaymentTime;
@@ -275,10 +292,8 @@ export function generatePropertyHistoricalData(
     earliestTime = new Date(refYear - 1, refMonth, 1).getTime();
   }
 
-  // Filter payments for current tenant (on or after contract start date)
-  const tenantPropPayments = hasContractStart
-    ? propPayments.filter((p) => parseLocalDate(p.date).getTime() >= contractStart.getTime())
-    : propPayments;
+  // Include all property payments (do not discard advance or earlier on-time payments)
+  const tenantPropPayments = propPayments;
 
   const earliestDate = new Date(earliestTime);
   let startYear = earliestDate.getFullYear();
@@ -297,7 +312,7 @@ export function generatePropertyHistoricalData(
   let rentRunning = 0;
 
   if (includeRent) {
-    // Collect all rent and late fee payments for current tenant
+    // Collect all rent and late fee payments for property
     const rentPaymentsList: Array<{
       id: string;
       date: string;
@@ -384,29 +399,41 @@ export function generatePropertyHistoricalData(
       const graceDateStr = `${graceDate.getFullYear()}-${String(graceDate.getMonth() + 1).padStart(2, '0')}-${String(graceDate.getDate()).padStart(2, '0')}`;
 
       if (dueDate.getTime() <= refTime) {
-        const histPropStatus = property.status || 'rentado';
-        const histIsAccruing = histPropStatus === 'rentado' || histPropStatus === 'en_proceso_legal';
+        const periodKey = `${cYear}-${String(cMonth + 1).padStart(2, '0')}`;
+        const defaultPeriodStatus = (hasContractStart && dueDate.getTime() < contractStart.getTime()) ? 'vacante' : (property.status || 'rentado');
+        const periodStatus = property.periodStatuses?.[periodKey] || defaultPeriodStatus;
+        // Strictly only accrue rent and late fees if property was rented during this period:
+        // Vacant, maintenance, and legal dispute MUST NOT accrue rent obligations or late fees!
+        const histIsAccruing = periodStatus === 'rentado';
         const cycleRent = histIsAccruing ? getPropertyRentForDate(property, dueDate) : 0;
 
-        if (cycleRent > 0) {
+        if (histIsAccruing) {
           accumulatedObligationsSoFar += cycleRent;
+        }
 
-          rentEntries.push({
-            id: `rent-obl-${cYear}-${cMonth}`,
-            date: dueDateStr,
-            conceptType: 'renta',
-            conceptName: 'Renta Contractual',
-            transactionTitle: `Obligación contractual de Renta (${periodNameCap})`,
-            obligationAmount: cycleRent,
-            contractualDueDate: dueDateStr,
-            paymentAmount: null,
-            paymentDate: null,
-            runningBalance: 0,
-            notes: `Vencimiento contractual: ${formatDate(dueDateStr)}. Período de gracia: ${graceDays} días sin recargos (hasta ${formatDate(graceDateStr)}).`,
-            isPayment: false,
-            isLateFee: false,
-          });
+        rentEntries.push({
+          id: `rent-obl-${cYear}-${cMonth}`,
+          date: dueDateStr,
+          conceptType: 'renta',
+          conceptName: 'Renta Contractual',
+          transactionTitle: `Obligación contractual de Renta (${periodNameCap})`,
+          obligationAmount: histIsAccruing ? cycleRent : 0,
+          contractualDueDate: dueDateStr,
+          paymentAmount: null,
+          paymentDate: null,
+          runningBalance: 0,
+          notes: histIsAccruing
+            ? `Vencimiento contractual: ${formatDate(dueDateStr)}. Período de gracia: ${graceDays} días sin recargos (hasta ${formatDate(graceDateStr)}).`
+            : `Período registrado como ${periodStatus.toUpperCase()} (Sin cobro de renta ni penalidades de mora).`,
+          isPayment: false,
+          isLateFee: false,
+          cycleYear: cYear,
+          cycleMonth: cMonth,
+          periodKey,
+          periodStatus: periodStatus as any,
+        });
 
+        if (histIsAccruing && cycleRent > 0) {
           // Evaluate whether late fee applies for this cycle:
           // We verify the tenant's cumulative rent balance at the grace deadline (graceDate).
           // Total rent paid by tenant on or before grace date (includes all prior advance payments + payments during grace):
@@ -487,8 +514,10 @@ export function generatePropertyHistoricalData(
       const periodName = `${new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(dueDate)} ${cYear}`;
       const periodNameCap = periodName.charAt(0).toUpperCase() + periodName.slice(1);
 
+      const periodKey = `${cYear}-${String(cMonth + 1).padStart(2, '0')}`;
       if (refTime >= dueDate.getTime()) {
-        const waterCost = Number(property.utilitiesWaterAmount) || 0;
+        const pUtils = getPropertyUtilitiesForPeriod(property, periodKey);
+        const waterCost = pUtils.waterAmount;
         if (waterCost > 0) {
           waterEntries.push({
             id: `water-obl-${cYear}-${cMonth}`,
@@ -501,9 +530,12 @@ export function generatePropertyHistoricalData(
             paymentAmount: null,
             paymentDate: null,
             runningBalance: 0,
-            notes: `Consumo según factura del proveedor de agua. Partida en cuenta segregada de la renta.`,
+            notes: `Consumo según factura del proveedor de agua (${pUtils.isCustomPeriod ? 'Factura editada/específica' : 'Consumo mensual'}). Partida en cuenta segregada de la renta.`,
             isPayment: false,
             isLateFee: false,
+            cycleYear: cYear,
+            cycleMonth: cMonth,
+            periodKey,
           });
         }
 
@@ -594,8 +626,10 @@ export function generatePropertyHistoricalData(
       const periodName = `${new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(dueDate)} ${cYear}`;
       const periodNameCap = periodName.charAt(0).toUpperCase() + periodName.slice(1);
 
+      const periodKey = `${cYear}-${String(cMonth + 1).padStart(2, '0')}`;
       if (refTime >= dueDate.getTime()) {
-        const eCost = Number(property.utilitiesElectricAmount) || 0;
+        const pUtils = getPropertyUtilitiesForPeriod(property, periodKey);
+        const eCost = pUtils.electricAmount;
         if (eCost > 0) {
           electricEntries.push({
             id: `electric-obl-${cYear}-${cMonth}`,
@@ -608,9 +642,12 @@ export function generatePropertyHistoricalData(
             paymentAmount: null,
             paymentDate: null,
             runningBalance: 0,
-            notes: `Consumo según factura de proveedor eléctrico. Partida en cuenta segregada de la renta.`,
+            notes: `Consumo según factura de proveedor eléctrico (${pUtils.isCustomPeriod ? 'Factura editada/específica' : 'Consumo mensual'}). Partida en cuenta segregada de la renta.`,
             isPayment: false,
             isLateFee: false,
+            cycleYear: cYear,
+            cycleMonth: cMonth,
+            periodKey,
           });
         }
 
@@ -701,8 +738,10 @@ export function generatePropertyHistoricalData(
       const periodName = `${new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(dueDate)} ${cYear}`;
       const periodNameCap = periodName.charAt(0).toUpperCase() + periodName.slice(1);
 
+      const periodKey = `${cYear}-${String(cMonth + 1).padStart(2, '0')}`;
       if (refTime >= dueDate.getTime()) {
-        const mCost = Number(property.utilitiesMaintenanceAmount) || 0;
+        const pUtils = getPropertyUtilitiesForPeriod(property, periodKey);
+        const mCost = pUtils.maintenanceAmount;
         if (mCost > 0) {
           maintenanceEntries.push({
             id: `maint-obl-${cYear}-${cMonth}`,
@@ -715,9 +754,12 @@ export function generatePropertyHistoricalData(
             paymentAmount: null,
             paymentDate: null,
             runningBalance: 0,
-            notes: `Cuota mensual de condominio y áreas comunes. Partida en cuenta segregada.`,
+            notes: `Cuota mensual de condominio y áreas comunes (${pUtils.isCustomPeriod ? 'Cuota editada/específica' : 'Cuota estándar'}). Partida en cuenta segregada.`,
             isPayment: false,
             isLateFee: false,
+            cycleYear: cYear,
+            cycleMonth: cMonth,
+            periodKey,
           });
         }
 
@@ -790,6 +832,80 @@ export function generatePropertyHistoricalData(
       entry.runningBalance = Math.round(maintRunning * 100) / 100;
     }
   }
+
+  // 5. Depósito de Garantía (Fianza Contractual)
+  const depositEntries: HistoricalLedgerEntry[] = [];
+  let depositRunning = 0;
+  const contractualDeposit = Math.max(0, Number(property.depositAmount) || 0);
+
+  if (contractualDeposit > 0) {
+    const depStartDate = property.contractStartDate || (tenantPropPayments[0]?.date ? tenantPropPayments[0].date : '2026-01-01');
+    depositEntries.push({
+      id: `deposit-obl-${property.id}`,
+      date: depStartDate,
+      conceptType: 'deposito',
+      conceptName: 'Depósito en Garantía',
+      transactionTitle: 'Depósito en Garantía Requerido en Contrato',
+      obligationAmount: contractualDeposit,
+      contractualDueDate: depStartDate,
+      paymentAmount: null,
+      paymentDate: null,
+      runningBalance: 0,
+      notes: `Monto de fianza o depósito en garantía estipulado en las cláusulas del contrato de arrendamiento.`,
+      isPayment: false,
+      isLateFee: false,
+    });
+  }
+
+  for (const pay of tenantPropPayments) {
+    const isDeposit = pay.concept === 'deposito' ||
+      (pay.period && (pay.period.toLowerCase().includes('deposito') || pay.period.toLowerCase().includes('depósito') || pay.period.toLowerCase().includes('fianza') || pay.period.toLowerCase().includes('garant'))) ||
+      (pay.notes && (pay.notes.toLowerCase().includes('deposito') || pay.notes.toLowerCase().includes('depósito') || pay.notes.toLowerCase().includes('fianza') || pay.notes.toLowerCase().includes('garant')));
+    const dAmt = Number(pay.appliedToDeposit) || (isDeposit ? Number(pay.amount) : 0);
+    if (dAmt > 0) {
+      depositEntries.push({
+        id: `deposit-pay-${pay.id}`,
+        date: pay.date,
+        conceptType: 'deposito',
+        conceptName: 'Depósito en Garantía',
+        transactionTitle: `Pago Registrado: Depósito en Garantía (${pay.period || 'Fianza Contractual'})`,
+        obligationAmount: null,
+        contractualDueDate: null,
+        paymentAmount: dAmt,
+        paymentDate: pay.date,
+        runningBalance: 0,
+        notes: `Pago de fianza/garantía registrado por ${pay.payerName || property.tenant1.name} vía ${(pay.paymentMethod || 'transferencia').toUpperCase()}${pay.reference ? ` (Ref: ${pay.reference})` : ''}. ${pay.applicationFootnote || 'Acreditado a fianza/garantía en contrato.'}`,
+        isPayment: true,
+        isLateFee: false,
+        payerName: pay.payerName,
+        method: pay.paymentMethod,
+        reference: pay.reference,
+      });
+    }
+  }
+
+  depositEntries.sort((a, b) => {
+    const cmp = parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime();
+    if (cmp !== 0) return cmp;
+    if (!a.isPayment && b.isPayment) return -1;
+    if (a.isPayment && !b.isPayment) return 1;
+    return 0;
+  });
+
+  for (const entry of depositEntries) {
+    if (entry.obligationAmount !== null) depositRunning += entry.obligationAmount;
+    if (entry.paymentAmount !== null) depositRunning -= entry.paymentAmount;
+    entry.runningBalance = Math.round(depositRunning * 100) / 100;
+  }
+
+  // Contractual security deposit remains active and in escrow across the whole lease.
+  // We keep the full deposit ledger entries visible so deposit obligations and payments are never hidden.
+  const depositResult = {
+    filteredEntries: depositEntries,
+    totalObligations: depositEntries.reduce((s, e) => s + (e.obligationAmount || 0), 0),
+    totalPayments: depositEntries.reduce((s, e) => s + (e.paymentAmount || 0), 0),
+    finalBalance: depositRunning,
+  };
 
   const rentResult = applyHistoryDateFilter(
     rentEntries,
@@ -1015,6 +1131,12 @@ export function generatePropertyHistoricalData(
     maintenanceTotalPayments: maintenanceResult.totalPayments,
     maintenanceFinalBalance: maintenanceResult.finalBalance,
 
+    // Depósito de Garantía Contractual
+    depositEntries: depositResult.filteredEntries,
+    depositTotalObligations: depositResult.totalObligations,
+    depositTotalPayments: depositResult.totalPayments,
+    depositFinalBalance: depositResult.finalBalance,
+
     // Gastos Operativos de la Propiedad
     expenseEntries: expenseResult.filteredEntries,
     expenseTotalAmount: expenseResult.totalObligations,
@@ -1041,6 +1163,8 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
   onOpenInvoice,
   onRegisterPayment,
   canExportCode = false,
+  onUpdatePeriodStatus,
+  onUpdatePeriodUtilities,
 }) => {
   // Permiso exclusivo de desarrollador / cuentas VIP autorizadas para ver y descargar el código fuente (.ZIP)
   const isDevStudio = typeof window !== 'undefined' && (
@@ -1122,6 +1246,17 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
 
   // Historial Transaccional (Estado de Cuenta con Balances Progresivos)
   const [showHistory, setShowHistory] = useState<boolean>(false);
+
+  // Modal para edición de facturas variables de utilidades por período histórico
+  const [editingPeriodUtility, setEditingPeriodUtility] = useState<{
+    propertyId: string;
+    propertyName: string;
+    periodKey: string;
+    utilityType: 'water' | 'electric' | 'maintenance';
+    utilityLabel: string;
+    currentAmount: number;
+  } | null>(null);
+  const [utilityEditAmount, setUtilityEditAmount] = useState<string>('');
 
   // Filtro de Rango de Fechas para HISTORIAL (Todo, 6 meses, 12 meses, 24 meses o fechas libres)
   const [historyPreset, setHistoryPreset] = useState<'all' | '6m' | '12m' | '24m' | 'custom'>('all');
@@ -1253,8 +1388,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
         // Payments for this property specifically in the current cycle
         const propPayments = payments.filter((p) => p.propertyId === property.id);
         const cyclePayments = propPayments.filter((p) => {
-          const pDate = parseLocalDate(p.date);
-          return pDate.getFullYear() === currentYear && pDate.getMonth() === currentMonth;
+          return matchPaymentToPeriod(p, currentYear, currentMonth);
         });
 
         // Dates when payments were registered
@@ -2445,6 +2579,36 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                                             <span className="font-bold text-slate-900">
                                               {entry.transactionTitle}
                                             </span>
+                                            {entry.periodKey && entry.periodStatus && onUpdatePeriodStatus && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  const sequence: Array<'rentado' | 'vacante' | 'en_mantenimiento' | 'en_proceso_legal'> = ['rentado', 'vacante', 'en_mantenimiento', 'en_proceso_legal'];
+                                                  const nextIdx = (sequence.indexOf(entry.periodStatus!) + 1) % sequence.length;
+                                                  onUpdatePeriodStatus(property.id, entry.periodKey!, sequence[nextIdx]);
+                                                }}
+                                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition cursor-pointer shadow-2xs ${
+                                                  entry.periodStatus === 'rentado'
+                                                    ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                                    : entry.periodStatus === 'vacante'
+                                                    ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                                    : entry.periodStatus === 'en_mantenimiento'
+                                                    ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                                                    : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                                                }`}
+                                                title="Hacer clic para cambiar estatus de propiedad en este periodo histórico"
+                                              >
+                                                <span>
+                                                  {entry.periodStatus === 'rentado'
+                                                    ? '🟢 Rentado'
+                                                    : entry.periodStatus === 'vacante'
+                                                    ? '⚪ Vacante'
+                                                    : entry.periodStatus === 'en_mantenimiento'
+                                                    ? '🟡 Mantenimiento'
+                                                    : '🔴 Proceso Legal'}
+                                                </span>
+                                              </button>
+                                            )}
                                             {entry.isLateFee && !entry.isPayment && (
                                               <span className="px-1.5 py-0.2 bg-rose-100 text-rose-800 text-[9px] font-black rounded">
                                                 Penalidad por Mora
@@ -2455,7 +2619,7 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                                                 Pago Registrado
                                               </span>
                                             )}
-                                            {!entry.isPayment && !entry.isLateFee && (
+                                            {!entry.isPayment && !entry.isLateFee && !entry.periodKey && (
                                               <span className="px-1.5 py-0.2 bg-sky-100 text-sky-800 text-[9px] font-bold rounded">
                                                 Obligación Contractual
                                               </span>
@@ -2585,9 +2749,33 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                                             <span className="font-bold text-slate-900">{entry.transactionTitle}</span>
                                           </td>
                                           <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-sky-900">
-                                            {entry.obligationAmount !== null
-                                              ? formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)
-                                              : '-'}
+                                            {entry.obligationAmount !== null ? (
+                                              <div className="inline-flex items-center justify-end gap-1.5">
+                                                <span>{formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)}</span>
+                                                {entry.periodKey && onUpdatePeriodUtilities && !entry.isPayment && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setEditingPeriodUtility({
+                                                        propertyId: property.id,
+                                                        propertyName: property.propertyIdentifier,
+                                                        periodKey: entry.periodKey!,
+                                                        utilityType: 'water',
+                                                        utilityLabel: 'Utilidad de Agua Potable',
+                                                        currentAmount: entry.obligationAmount!,
+                                                      });
+                                                      setUtilityEditAmount(String(entry.obligationAmount || 0));
+                                                    }}
+                                                    className="p-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-100 transition cursor-pointer"
+                                                    title="Editar costo facturado de agua en este mes histórico"
+                                                  >
+                                                    <Edit3 className="w-3.5 h-3.5" />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            ) : (
+                                              '-'
+                                            )}
                                           </td>
                                           <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-emerald-700">
                                             {entry.paymentAmount !== null ? (
@@ -2689,9 +2877,33 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                                             <span className="font-bold text-slate-900">{entry.transactionTitle}</span>
                                           </td>
                                           <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-amber-900">
-                                            {entry.obligationAmount !== null
-                                              ? formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)
-                                              : '-'}
+                                            {entry.obligationAmount !== null ? (
+                                              <div className="inline-flex items-center justify-end gap-1.5">
+                                                <span>{formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)}</span>
+                                                {entry.periodKey && onUpdatePeriodUtilities && !entry.isPayment && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setEditingPeriodUtility({
+                                                        propertyId: property.id,
+                                                        propertyName: property.propertyIdentifier,
+                                                        periodKey: entry.periodKey!,
+                                                        utilityType: 'electric',
+                                                        utilityLabel: 'Utilidad de Electricidad (LUMA / AEE)',
+                                                        currentAmount: entry.obligationAmount!,
+                                                      });
+                                                      setUtilityEditAmount(String(entry.obligationAmount || 0));
+                                                    }}
+                                                    className="p-1 rounded text-slate-400 hover:text-amber-600 hover:bg-amber-100 transition cursor-pointer"
+                                                    title="Editar factura de electricidad de este mes histórico"
+                                                  >
+                                                    <Edit3 className="w-3.5 h-3.5" />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            ) : (
+                                              '-'
+                                            )}
                                           </td>
                                           <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-emerald-700">
                                             {entry.paymentAmount !== null ? (
@@ -2793,9 +3005,33 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                                             <span className="font-bold text-slate-900">{entry.transactionTitle}</span>
                                           </td>
                                           <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-purple-900">
-                                            {entry.obligationAmount !== null
-                                              ? formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)
-                                              : '-'}
+                                            {entry.obligationAmount !== null ? (
+                                              <div className="inline-flex items-center justify-end gap-1.5">
+                                                <span>{formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)}</span>
+                                                {entry.periodKey && onUpdatePeriodUtilities && !entry.isPayment && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setEditingPeriodUtility({
+                                                        propertyId: property.id,
+                                                        propertyName: property.propertyIdentifier,
+                                                        periodKey: entry.periodKey!,
+                                                        utilityType: 'maintenance',
+                                                        utilityLabel: 'Cuota de Mantenimiento',
+                                                        currentAmount: entry.obligationAmount!,
+                                                      });
+                                                      setUtilityEditAmount(String(entry.obligationAmount || 0));
+                                                    }}
+                                                    className="p-1 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-100 transition cursor-pointer"
+                                                    title="Editar cuota de mantenimiento de este mes histórico"
+                                                  >
+                                                    <Edit3 className="w-3.5 h-3.5" />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            ) : (
+                                              '-'
+                                            )}
                                           </td>
                                           <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-emerald-700">
                                             {entry.paymentAmount !== null ? (
@@ -2847,6 +3083,103 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
                                 Mantenimiento / Cuota: N/A (No aplica a esta propiedad según contrato de arrendamiento)
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {/* PARTIDA: DEPÓSITO EN GARANTÍA / FIANZA CONTRACTUAL */}
+                        {item.historyData.depositEntries.length > 0 && (
+                          <div className="border border-teal-200 rounded-lg overflow-hidden space-y-2">
+                            <div className="bg-teal-50 p-2.5 flex items-center justify-between border-b border-teal-200">
+                              <div className="flex items-center gap-2">
+                                <ShieldCheck className="w-4 h-4 text-teal-700" />
+                                <span className="font-black text-xs text-teal-900 uppercase">
+                                  Partida: Depósito en Garantía / Fianza Contractual (Cuenta Segregada)
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-bold text-teal-700 uppercase">
+                                {item.historyData.depositFinalBalance === 0
+                                  ? '✓ Fianza Liquidada / Al Día'
+                                  : `Fianza Pendiente: ${formatCurrency(item.historyData.depositFinalBalance, companyAdmin.currencySymbol)}`}
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs">
+                                <thead>
+                                  <tr className="bg-teal-950 text-white text-[10px] uppercase tracking-wider">
+                                    <th className="py-2 px-2.5 font-bold w-24 text-center">Fecha</th>
+                                    <th className="py-2 px-2.5 font-bold">Concepto / Transacción</th>
+                                    <th className="py-2 px-2.5 font-bold text-right">Depósito Requerido</th>
+                                    <th className="py-2 px-2.5 font-bold text-right">Pago Registrado</th>
+                                    <th className="py-2 px-2.5 font-bold text-right bg-slate-900">Balance Calculado</th>
+                                    <th className="py-2 px-2.5 font-bold">Evidencia & Soporte Auditable</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-teal-100">
+                                  {item.historyData.depositEntries.map((entry) => (
+                                    <tr
+                                      key={entry.id}
+                                      className={`hover:bg-teal-50/30 transition ${entry.isPayment ? 'bg-teal-50/20' : ''}`}
+                                    >
+                                      <td className="py-2 px-2.5 text-center font-semibold text-slate-700 whitespace-nowrap">
+                                        {formatDate(entry.date)}
+                                      </td>
+                                      <td className="py-2 px-2.5">
+                                        <span className="font-bold text-slate-900">{entry.transactionTitle}</span>
+                                      </td>
+                                      <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-slate-900">
+                                        {entry.obligationAmount !== null
+                                          ? formatCurrency(entry.obligationAmount, companyAdmin.currencySymbol)
+                                          : '-'}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-right whitespace-nowrap font-black text-emerald-700">
+                                        {entry.paymentAmount !== null ? (
+                                          <div>
+                                            <span>{formatCurrency(entry.paymentAmount, companyAdmin.currencySymbol)}</span>
+                                            {entry.paymentDate && (
+                                              <span className="block text-[9px] text-slate-500 font-medium">
+                                                Fecha: {formatDate(entry.paymentDate)}
+                                              </span>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          '-'
+                                        )}
+                                      </td>
+                                      <td className={`py-2 px-2.5 text-right bg-slate-50 font-black whitespace-nowrap ${
+                                        entry.runningBalance === 0 ? 'text-emerald-700' : 'text-teal-900'
+                                      }`}>
+                                        {entry.runningBalance === 0 ? '✓ $0.00 (Liquidado)' : formatCurrency(entry.runningBalance, companyAdmin.currencySymbol)}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-slate-600 text-[11px] leading-snug">
+                                        {entry.notes}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="bg-teal-50 font-black text-[11px] text-teal-900 border-t-2 border-teal-200">
+                                    <td colSpan={2} className="py-2 px-2.5 uppercase">
+                                      Totales Depósito en Garantía Contractual:
+                                    </td>
+                                    <td className="py-2 px-2.5 text-right">
+                                      {formatCurrency(item.historyData.depositTotalObligations, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className="py-2 px-2.5 text-right text-emerald-800">
+                                      {formatCurrency(item.historyData.depositTotalPayments, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className={`py-2 px-2.5 text-right bg-teal-100 ${
+                                      item.historyData.depositFinalBalance === 0 ? 'text-emerald-800' : 'text-teal-900'
+                                    }`}>
+                                      {formatCurrency(item.historyData.depositFinalBalance, companyAdmin.currencySymbol)}
+                                    </td>
+                                    <td className="py-2 px-2.5 text-slate-500 font-normal text-[10px]">
+                                      Fianza contractual en custodia
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
                           </div>
                         )}
 
@@ -3528,6 +3861,89 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modal para Editar Factura / Costo Variable de Utilidad del Período */}
+      {editingPeriodUtility && onUpdatePeriodUtilities && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 rounded-xl">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-slate-900 dark:text-white">
+                    Editar Factura Histórica de Utilidad
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {editingPeriodUtility.propertyName} • Período: {editingPeriodUtility.periodKey}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingPeriodUtility(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="bg-sky-50 dark:bg-sky-950/40 p-3 rounded-xl border border-sky-100 dark:border-sky-900/60 text-sky-800 dark:text-sky-300">
+                <p className="font-semibold mb-1">
+                  Concepto: <strong>{editingPeriodUtility.utilityLabel}</strong>
+                </p>
+                <p className="text-[11px] leading-relaxed">
+                  Este cambio se aplicará <strong>únicamente al período {editingPeriodUtility.periodKey}</strong>. No afectará ni modificará los costos o facturas de meses anteriores ni posteriores, preservando la fidelidad histórica de su contabilidad.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Monto Facturado en este Período ({primaryAdmin.currencySymbol || '$'})
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={utilityEditAmount}
+                  onChange={(e) => setUtilityEditAmount(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-sm focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
+                  placeholder="0.00"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEditingPeriodUtility(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const newAmt = parseFloat(utilityEditAmount) || 0;
+                  const updatePayload = {
+                    ...(editingPeriodUtility.utilityType === 'water' ? { waterAmount: newAmt } : {}),
+                    ...(editingPeriodUtility.utilityType === 'electric' ? { electricAmount: newAmt } : {}),
+                    ...(editingPeriodUtility.utilityType === 'maintenance' ? { maintenanceAmount: newAmt } : {}),
+                  };
+                  onUpdatePeriodUtilities(editingPeriodUtility.propertyId, editingPeriodUtility.periodKey, updatePayload);
+                  setEditingPeriodUtility(null);
+                }}
+                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+              >
+                Guardar Factura del Período
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

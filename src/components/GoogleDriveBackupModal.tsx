@@ -167,11 +167,11 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
       setBackupFiles(files);
       setHasValidToken(true);
     } catch (err: any) {
-      if (err?.message?.includes('AUTH_EXPIRED') || err?.status === 401) {
+      if (err?.message?.includes('AUTH_EXPIRED') || err?.message?.includes('AUTH_INSUFFICIENT_SCOPES') || err?.message?.includes('insufficient') || err?.status === 401) {
         clearStoredToken();
         setHasValidToken(false);
         if (interactive) {
-          // Token was expired during an interactive refresh click, re-authenticate
+          // Token was expired or lacking scopes during an interactive refresh click, re-authenticate
           try {
             const res = await googleSignIn();
             if (res?.accessToken) {
@@ -185,7 +185,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
         }
         setStatusMessage({
           type: 'info',
-          text: 'La sesión de Google Drive ha expirado. Haz clic en "Renovar Conexión" o "Actualizar lista" para renovar el acceso.',
+          text: 'Se actualizaron los permisos de Google Drive. Haz clic en "Renovar Conexión" o "Actualizar lista" para autorizar el acceso.',
         });
       } else {
         console.warn('Could not list drive files:', err);
@@ -377,12 +377,12 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
         });
         return;
       }
-      if (err?.message?.includes('AUTH_EXPIRED')) {
+      if (err?.message?.includes('AUTH_EXPIRED') || err?.message?.includes('AUTH_INSUFFICIENT_SCOPES') || err?.message?.includes('insufficient') || err?.message?.includes('scopes')) {
         clearStoredToken();
         setHasValidToken(false);
         setStatusMessage({
           type: 'error',
-          text: 'Tu sesión de Google Drive ha expirado. Haz clic en "Renovar Conexión" y vuelve a intentar.',
+          text: 'Sesión de Google Drive expirada. Haz clic en "Renovar Conexión" para sincronizar de nuevo.',
         });
         return;
       }
@@ -500,12 +500,12 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
         });
         return;
       }
-      if (err?.message?.includes('AUTH_EXPIRED')) {
+      if (err?.message?.includes('AUTH_EXPIRED') || err?.message?.includes('AUTH_INSUFFICIENT_SCOPES') || err?.message?.includes('insufficient') || err?.message?.includes('scopes')) {
         clearStoredToken();
         setHasValidToken(false);
         setStatusMessage({
           type: 'error',
-          text: 'Sesión expirada. Por favor renueva la conexión e intenta restaurar nuevamente.',
+          text: 'Sesión o permisos de Google Drive expirados. Por favor renueva la conexión e intenta restaurar nuevamente.',
         });
         return;
       }

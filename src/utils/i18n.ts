@@ -58,6 +58,7 @@ export const translations = {
     tabProperties: 'Propiedades',
     tabTracking: 'Cobranza',
     tabAudit: 'Libro',
+    tabUtilities: 'Utilidades',
     tabReminders: 'Alertas',
     tabReports: 'Reporte',
 
@@ -209,6 +210,7 @@ export const translations = {
     tabProperties: 'Properties',
     tabTracking: 'Tracking',
     tabAudit: 'Ledger',
+    tabUtilities: 'Utilities',
     tabReminders: 'Alerts',
     tabReports: 'Report',
 

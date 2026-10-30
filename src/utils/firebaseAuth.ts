@@ -23,31 +23,28 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Request Google Drive app file scopes (approved, non-restricted)
+// Request Google Drive app file scope (approved, non-restricted, safe)
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.setCustomParameters({
   prompt: 'select_account',
 });
 
-// Access token cache with session backup
-const TOKEN_KEY = 'gdrive_oauth_token_v1';
-const TOKEN_TTL_MS = 55 * 60 * 1000; // 55 minutes
-let cachedAccessToken: { token: string; timestamp: number } | null = null;
+// Access token persistent storage
+const TOKEN_KEY = 'gdrive_oauth_token_v3';
+let cachedAccessToken: string | null = null;
 let isSigningIn = false;
 
 export function setToken(token: string | null) {
+  cachedAccessToken = token;
   if (token) {
-    cachedAccessToken = { token, timestamp: Date.now() };
     try {
-      const payload = JSON.stringify(cachedAccessToken);
-      sessionStorage.setItem(TOKEN_KEY, payload);
-      localStorage.setItem(TOKEN_KEY, payload);
+      localStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.setItem(TOKEN_KEY, token);
     } catch {}
   } else {
-    cachedAccessToken = null;
     try {
-      sessionStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
     } catch {}
   }
 }
@@ -58,27 +55,17 @@ export function clearStoredToken() {
 
 export function getStoredToken(): string | null {
   if (cachedAccessToken) {
-    if (Date.now() - cachedAccessToken.timestamp < TOKEN_TTL_MS) {
-      return cachedAccessToken.token;
-    }
-    // Expired
-    cachedAccessToken = null;
+    return cachedAccessToken;
   }
 
   try {
-    const raw = sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY);
+    const raw = localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed?.token && typeof parsed.timestamp === 'number') {
-        if (Date.now() - parsed.timestamp < TOKEN_TTL_MS) {
-          cachedAccessToken = { token: parsed.token, timestamp: parsed.timestamp };
-          return cachedAccessToken.token;
-        }
-      }
+      cachedAccessToken = raw;
+      return cachedAccessToken;
     }
   } catch {}
 
-  clearStoredToken();
   return null;
 }
 
@@ -157,7 +144,9 @@ export const getAccessToken = async (): Promise<string | null> => {
 /**
  * Sign out and clear cached token
  */
-export const logout = async (): Promise<void> => {
+export const logout = async (clearDriveToken = true): Promise<void> => {
   await auth.signOut();
-  setToken(null);
+  if (clearDriveToken) {
+    setToken(null);
+  }
 };
