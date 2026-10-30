@@ -512,6 +512,7 @@ export function calculatePropertyStatus(
   const totalBilledThisMonth = currentMonthRentCharge + totalUtilitiesAmount;
 
   // Segregated breakdown of all-time payments for deposit and rent tracking for current tenant:
+  // Segregated breakdown of all-time payments for deposit and rent tracking for current tenant:
   let totalDepositPaid = 0;
   let totalRentPaidAllTime = 0;
   for (const pay of tenantPayments) {
@@ -547,9 +548,15 @@ export function calculatePropertyStatus(
 
   for (const pay of paymentsThisMonth) {
     const amt = Number(pay.amount) || 0;
-    if (pay.appliedToRent !== undefined || pay.appliedToLateFees !== undefined ||
-        pay.appliedToWater !== undefined || pay.appliedToElectric !== undefined ||
-        pay.appliedToMaintenance !== undefined || pay.appliedToDeposit !== undefined) {
+    const isDeposit = pay.concept === 'deposito' ||
+      (pay.period && (pay.period.toLowerCase().includes('deposito') || pay.period.toLowerCase().includes('depósito') || pay.period.toLowerCase().includes('fianza') || pay.period.toLowerCase().includes('garant'))) ||
+      (pay.notes && (pay.notes.toLowerCase().includes('deposito') || pay.notes.toLowerCase().includes('depósito') || pay.notes.toLowerCase().includes('fianza') || pay.notes.toLowerCase().includes('garant')));
+
+    const hasSpecificApplied = (Number(pay.appliedToRent) > 0 || Number(pay.appliedToLateFees) > 0 ||
+      Number(pay.appliedToWater) > 0 || Number(pay.appliedToElectric) > 0 ||
+      Number(pay.appliedToMaintenance) > 0 || Number(pay.appliedToDeposit) > 0);
+
+    if (hasSpecificApplied) {
       paidRentThisMonth += Number(pay.appliedToRent) || 0;
       paidLateFeesThisMonth += Number(pay.appliedToLateFees) || 0;
       paidWaterThisMonth += Number(pay.appliedToWater) || 0;
@@ -563,7 +570,7 @@ export function calculatePropertyStatus(
         paidElectricThisMonth += amt;
       } else if (pay.concept === 'mantenimiento') {
         paidMaintenanceThisMonth += amt;
-      } else if (pay.concept === 'deposito') {
+      } else if (pay.concept === 'deposito' || isDeposit) {
         paidDepositThisMonth += amt;
       } else if (pay.concept === 'mora') {
         paidLateFeesThisMonth += amt;
@@ -574,74 +581,117 @@ export function calculatePropertyStatus(
   }
 
   // Calculate contractual rent obligations up to the current evaluation point:
-  // Strictly only accrue rent for periods where the property status was 'rentado'
+  // Synchronized with AccountingAuditView: find the true earliest inception among contract start,
+  // recorded payments, and variable rent period schedules.
+  const paymentTimes = tenantPayments
+    .map((p) => parseLocalDate(p.date).getTime())
+    .filter((t) => !isNaN(t));
+  const earliestPaymentTime = paymentTimes.length > 0 ? Math.min(...paymentTimes) : null;
+
+  const rentPeriodTimes = (property.rentPeriods || [])
+    .map((rp) => parseLocalDate(rp.effectiveDate).getTime())
+    .filter((t) => !isNaN(t));
+  const earliestRentPeriodTime = rentPeriodTimes.length > 0 ? Math.min(...rentPeriodTimes) : null;
+
+  let earliestTime: number;
+  const candidates: number[] = [];
+  if (hasContractStart && contractStartMidnight) candidates.push(contractStartMidnight.getTime());
+  if (earliestPaymentTime !== null) candidates.push(earliestPaymentTime);
+  if (earliestRentPeriodTime !== null) candidates.push(earliestRentPeriodTime);
+
+  if (candidates.length > 0) {
+    earliestTime = Math.min(...candidates);
+  } else {
+    earliestTime = new Date(currentYear - 1, currentMonth, 1).getTime();
+  }
+
+  const earliestDate = new Date(earliestTime);
+  let startYear = earliestDate.getFullYear();
+  let startMonth = earliestDate.getMonth();
+
+  if (startYear > currentYear || (startYear === currentYear && startMonth > currentMonth)) {
+    startYear = currentYear;
+    startMonth = currentMonth;
+  }
+
   let accumulatedPriorObligations = 0;
+  const diffMonths = (currentYear - startYear) * 12 + (currentMonth - startMonth);
+  if (diffMonths > 0) {
+    for (let m = 0; m < diffMonths; m++) {
+      const totalMonthIndex = startMonth + m;
+      const pastYear = startYear + Math.floor(totalMonthIndex / 12);
+      const pastMonth = totalMonthIndex % 12;
 
-  if (hasContractStart && contractStartMidnight && !isBeforeContractStart) {
-    const startYear = contractStartMidnight.getFullYear();
-    const startMonth = contractStartMidnight.getMonth();
+      const pastLastDay = new Date(pastYear, pastMonth + 1, 0).getDate();
+      const pastDueDay = Math.min(property.rentDueDay || 1, pastLastDay);
+      const pastDueDate = new Date(pastYear, pastMonth, pastDueDay, 0, 0, 0, 0);
 
-    const diffMonths = (currentYear - startYear) * 12 + (currentMonth - startMonth);
-    if (diffMonths > 0) {
-      for (let m = 0; m < diffMonths; m++) {
-        const totalMonthIndex = startMonth + m;
-        const pastYear = startYear + Math.floor(totalMonthIndex / 12);
-        const pastMonth = totalMonthIndex % 12;
+      const pastPeriodKey = `${pastYear}-${String(pastMonth + 1).padStart(2, '0')}`;
+      const defaultPastStatus = (hasContractStart && contractStartMidnight && pastDueDate.getTime() < contractStartMidnight.getTime()) ? 'vacante' : (property.status || 'rentado');
+      const pastPeriodStatus = property.periodStatuses?.[pastPeriodKey] || defaultPastStatus;
+      const pastIsAccruing = pastPeriodStatus === 'rentado';
+      const monthlyRent = pastIsAccruing ? getPropertyRentForDate(property, pastDueDate) : 0;
 
-        const pastLastDay = new Date(pastYear, pastMonth + 1, 0).getDate();
-        const pastDueDay = (m === 0 && contractStartMidnight.getDate() > property.rentDueDay)
-          ? Math.min(contractStartMidnight.getDate(), pastLastDay)
-          : Math.min(property.rentDueDay || 1, pastLastDay);
-
-        const cycleDateForPast = new Date(pastYear, pastMonth, pastDueDay);
-        const pastPeriodKey = `${pastYear}-${String(pastMonth + 1).padStart(2, '0')}`;
-        const pastPeriodStatus = property.periodStatuses?.[pastPeriodKey] || propStatus;
-        const pastIsAccruing = pastPeriodStatus === 'rentado';
-        const monthlyRent = pastIsAccruing ? getPropertyRentForDate(property, cycleDateForPast) : 0;
-
-        if (pastIsAccruing && monthlyRent > 0) {
-          accumulatedPriorObligations += monthlyRent;
-        }
+      if (pastIsAccruing && monthlyRent > 0) {
+        accumulatedPriorObligations += monthlyRent;
       }
     }
   }
 
-  // Total contractual rent accrued to date:
-  const currentAccruedRent = isRentDueReached && isAccruingRentAndLateFees ? currentActiveRent : 0;
-  const totalRentObligationsAccrued = accumulatedPriorObligations + currentAccruedRent;
+  // Calculate rent payments strictly received for prior cycles (excluding current cycle payments):
+  let totalRentPaidPrior = 0;
+  for (const pay of tenantPayments) {
+    if (matchPaymentToPeriod(pay, currentYear, currentMonth)) {
+      continue; // Handled in current cycle
+    }
+    const pDate = parseLocalDate(pay.date);
+    if (pDate.getFullYear() > currentYear || (pDate.getFullYear() === currentYear && pDate.getMonth() > currentMonth)) {
+      continue; // Future cycle payment
+    }
+    const amt = Number(pay.amount) || 0;
+    const isDeposit = pay.concept === 'deposito' ||
+      (pay.period && (pay.period.toLowerCase().includes('deposito') || pay.period.toLowerCase().includes('depósito') || pay.period.toLowerCase().includes('fianza') || pay.period.toLowerCase().includes('garant'))) ||
+      (pay.notes && (pay.notes.toLowerCase().includes('deposito') || pay.notes.toLowerCase().includes('depósito') || pay.notes.toLowerCase().includes('fianza') || pay.notes.toLowerCase().includes('garant')));
 
+    const rAmt = Number(pay.appliedToRent) || (pay.concept === 'renta' ? amt : 0);
+    const isGeneric = (!pay.concept || pay.concept === 'general') &&
+      !pay.appliedToRent && !pay.appliedToLateFees && !pay.appliedToWater && !pay.appliedToElectric && !pay.appliedToMaintenance && !pay.appliedToDeposit && !isDeposit;
+    const effectiveRentAmt = rAmt > 0 ? rAmt : (isGeneric ? amt : 0);
+
+    totalRentPaidPrior += effectiveRentAmt;
+  }
+
+  // Determine prior overdue balance vs prior surplus credit:
   let previousBalance = 0;
   let priorRentCredit = 0;
   let currentMonthRentUnpaid = 0;
   let isPaidOnTime = false;
 
-  if (totalRentPaidAllTime >= totalRentObligationsAccrued) {
-    // Tenant has paid all rent due to date in full (or has surplus credit in advance):
-    previousBalance = 0;
-    currentMonthRentUnpaid = 0;
-    priorRentCredit = totalRentPaidAllTime - accumulatedPriorObligations;
-    paidRentThisMonth = Math.min(currentActiveRent, Math.max(paidRentThisMonth, priorRentCredit));
-    isPaidOnTime = true;
-  } else if (totalRentPaidAllTime >= accumulatedPriorObligations) {
-    // Prior months are 100% paid, partial or zero payment made on current month:
-    previousBalance = 0;
-    const creditForCurrent = totalRentPaidAllTime - accumulatedPriorObligations;
-    priorRentCredit = creditForCurrent;
-    paidRentThisMonth = Math.max(paidRentThisMonth, creditForCurrent);
-    currentMonthRentUnpaid = Math.max(0, currentActiveRent - paidRentThisMonth);
-
-    // Paid on or before grace deadline check:
-    const paidBeforeOrDuringGrace = paymentsThisMonth
-      .filter((p) => parseLocalDate(p.date).getTime() <= graceEndMidnightMs)
-      .reduce((sum, p) => sum + (Number(p.appliedToRent) || (p.concept === 'renta' ? Number(p.amount) : 0)), 0);
-    isPaidOnTime = (creditForCurrent + paidBeforeOrDuringGrace) >= currentActiveRent;
-  } else {
-    // Prior months have an outstanding balance:
-    previousBalance = accumulatedPriorObligations - totalRentPaidAllTime;
+  const netPriorDebt = accumulatedPriorObligations - totalRentPaidPrior;
+  if (netPriorDebt > 0) {
+    previousBalance = Math.round(netPriorDebt * 100) / 100;
     priorRentCredit = 0;
-    currentMonthRentUnpaid = currentAccruedRent;
-    isPaidOnTime = false;
+  } else {
+    previousBalance = 0;
+    priorRentCredit = Math.round(Math.abs(netPriorDebt) * 100) / 100;
   }
+
+  // Current month rent:
+  // Direct payments for this month plus any real surplus prior credit
+  const directRentThisMonth = paidRentThisMonth;
+  const totalRentCoveringThisMonth = directRentThisMonth + priorRentCredit;
+  paidRentThisMonth = Math.min(currentActiveRent, totalRentCoveringThisMonth);
+
+  if (isRentDueReached) {
+    currentMonthRentUnpaid = Math.max(0, currentActiveRent - paidRentThisMonth);
+  } else {
+    currentMonthRentUnpaid = 0;
+  }
+
+  const paidBeforeOrDuringGrace = paymentsThisMonth
+    .filter((p) => parseLocalDate(p.date).getTime() <= graceEndMidnightMs)
+    .reduce((sum, p) => sum + (Number(p.appliedToRent) || (p.concept === 'renta' ? Number(p.amount) : 0)), 0);
+  isPaidOnTime = previousBalance === 0 && (priorRentCredit + paidBeforeOrDuringGrace) >= currentActiveRent;
 
   const pendingRentUnadjusted = isRentDueReached
     ? (currentMonthRentUnpaid + previousBalance)

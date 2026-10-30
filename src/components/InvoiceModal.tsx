@@ -3,11 +3,15 @@ import { Property, LandlordProfile, PropertyFinancialStatus, Payment, Administra
 import {
   formatCurrency,
   formatDate,
+  parseLocalDate,
   calculateNextPeriodInvoiceInfo,
   calculatePropertyStatus,
   getPropertyUtilitiesForPeriod,
   formatRentPeriodDateRange,
+  matchPaymentToPeriod,
+  getPropertyRentForDate,
 } from '../utils/calculations';
+import { generatePropertyHistoricalData } from './AccountingAuditView';
 import { getAdministratorForProperty } from '../utils/storage';
 import { downloadElementAsPdf, printElementSafely, openExternalUrl } from '../utils/pdfGenerator';
 import { SupportedLanguage, translations, getSavedLanguage } from '../utils/i18n';
@@ -24,6 +28,7 @@ import {
   User,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   FileText,
   Loader2,
   ExternalLink,
@@ -206,27 +211,95 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   const prevMaintDate = property.periodUtilities?.[prevPeriodKey]?.maintenanceBillingDate || `${prevPeriodKey}-30`;
   const currMaintDate = property.periodUtilities?.[invoicePeriodKey]?.maintenanceBillingDate || `${invoicePeriodKey}-30`;
 
-  const periodPayments = propertyPayments.filter((p) => {
-    return (p.period && p.period.toLowerCase().trim() === activePeriod.toLowerCase().trim()) || (p.date && p.date.startsWith(invoicePeriodKey));
+  // Strict cycle payment matching for Rent & Late Fees (excluding utility payments and deposit payments)
+  const isCycleRentOrLatePayment = (p: Payment, tYear: number, tMonth: number) => {
+    // Exclude deposits and utility-only payments
+    const isDeposit = p.concept === 'deposito' || Boolean(p.appliedToDeposit);
+    const isUtilityConcept = p.concept === 'agua' || p.concept === 'electricidad' || p.concept === 'mantenimiento';
+    const hasOnlyUtilityApplied = (Number(p.appliedToWater) > 0 || Number(p.appliedToElectric) > 0 || Number(p.appliedToMaintenance) > 0) &&
+      (!p.appliedToRent || Number(p.appliedToRent) === 0) && (!p.appliedToLateFees || Number(p.appliedToLateFees) === 0);
+
+    if (isDeposit || isUtilityConcept || hasOnlyUtilityApplied) {
+      return false;
+    }
+
+    const monthsEs = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const monthsEn = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+    if (p.period && p.period.trim() !== '') {
+      const pTrim = p.period.toLowerCase().trim();
+      const yyyyMm = `${tYear}-${String(tMonth + 1).padStart(2, '0')}`;
+      if (pTrim.includes(yyyyMm)) return true;
+
+      const targetMonthEs = monthsEs[tMonth];
+      const targetMonthEn = monthsEn[tMonth];
+      const targetYearStr = String(tYear);
+
+      const hasTargetMonth = pTrim.includes(targetMonthEs) || pTrim.includes(targetMonthEn);
+      const hasTargetYear = pTrim.includes(targetYearStr);
+
+      if (hasTargetMonth && hasTargetYear) return true;
+      if (hasTargetMonth && !pTrim.match(/\d{4}/)) return true;
+
+      // If period explicitly names another month, exclude it from this cycle
+      for (let m = 0; m < 12; m++) {
+        if (m !== tMonth && (pTrim.includes(monthsEs[m]) || pTrim.includes(monthsEn[m]))) {
+          return false;
+        }
+      }
+    }
+
+    // Strict fallback to payment date month & year (no 15-day window that duplicates payments across cycles)
+    const pDate = parseLocalDate(p.date);
+    return pDate.getFullYear() === tYear && pDate.getMonth() === tMonth;
+  };
+
+  const periodRentAndLatePayments = propertyPayments.filter((p) => {
+    if (isNextMonth && nextPeriodInfo?.nextPeriodKey) {
+      const [tYear, tMonth] = nextPeriodInfo.nextPeriodKey.split('-').map(Number);
+      return isCycleRentOrLatePayment(p, tYear, tMonth - 1);
+    }
+    const [iYear, iMonth] = invoicePeriodKey.split('-').map(Number);
+    return isCycleRentOrLatePayment(p, iYear, iMonth - 1);
   });
 
-  const paidRentDetail = periodPayments.reduce((s, p) => s + (Number(p.appliedToRent) || (p.concept === 'renta' ? Number(p.amount) : 0)), 0);
-  const paidLateFeeDetail = periodPayments.reduce((s, p) => s + (Number(p.appliedToLateFees) || (p.concept === 'mora' ? Number(p.amount) : 0)), 0);
-  const paidWaterDetail = periodPayments.reduce((s, p) => s + (Number(p.appliedToWater) || (p.concept === 'agua' ? Number(p.amount) : 0)), 0);
-  const paidElectricDetail = periodPayments.reduce((s, p) => s + (Number(p.appliedToElectric) || (p.concept === 'electricidad' ? Number(p.amount) : 0)), 0);
-  const paidMaintenanceDetail = periodPayments.reduce((s, p) => s + (Number(p.appliedToMaintenance) || (p.concept === 'mantenimiento' ? Number(p.amount) : 0)), 0);
+  const paidRentDetail = periodRentAndLatePayments.reduce((s, p) => {
+    const rAmt = Number(p.appliedToRent);
+    if (!isNaN(rAmt) && rAmt > 0) return s + rAmt;
+    if (p.concept === 'renta') return s + (Number(p.amount) || 0);
+    if (!p.concept || p.concept === 'general') return s + (Number(p.amount) || 0);
+    return s;
+  }, 0);
+
+  const paidLateFeeDetail = periodRentAndLatePayments.reduce((s, p) => {
+    const lAmt = Number(p.appliedToLateFees);
+    if (!isNaN(lAmt) && lAmt > 0) return s + lAmt;
+    if (p.concept === 'mora') return s + (Number(p.amount) || 0);
+    return s;
+  }, 0);
+
+  // Utility payment details for info display only (applied exclusively to utility ledger, NOT rent)
+  const periodUtilityPayments = propertyPayments.filter((p) => {
+    const isUtility = p.concept === 'agua' || p.concept === 'electricidad' || p.concept === 'mantenimiento' ||
+      (Number(p.appliedToWater) > 0 || Number(p.appliedToElectric) > 0 || Number(p.appliedToMaintenance) > 0);
+    if (!isUtility) return false;
+
+    const [iYear, iMonth] = invoicePeriodKey.split('-').map(Number);
+    const pDate = parseLocalDate(p.date);
+    return pDate.getFullYear() === iYear && pDate.getMonth() === (iMonth - 1);
+  });
+
+  const paidWaterDetail = periodUtilityPayments.reduce((s, p) => s + (Number(p.appliedToWater) || (p.concept === 'agua' ? Number(p.amount) : 0)), 0);
+  const paidElectricDetail = periodUtilityPayments.reduce((s, p) => s + (Number(p.appliedToElectric) || (p.concept === 'electricidad' ? Number(p.amount) : 0)), 0);
+  const paidMaintenanceDetail = periodUtilityPayments.reduce((s, p) => s + (Number(p.appliedToMaintenance) || (p.concept === 'mantenimiento' ? Number(p.amount) : 0)), 0);
+
+  const periodPayments = periodRentAndLatePayments;
 
   // Check if tenant has truly paid the rent for this period:
-  const rentPaymentsForPeriod = propertyPayments
-    .filter(
-      (p) =>
-        (p.period && p.period.toLowerCase().trim() === activePeriod.toLowerCase().trim()) ||
-        (p.date && p.date.startsWith(invoicePeriodKey))
-    )
-    .reduce((sum, p) => sum + (p.appliedToRent || (p.concept === 'renta' ? p.amount : 0)), 0);
+  const rentPaymentsForPeriod = paidRentDetail;
 
   const totalRentCoverage = Math.max(
-    (activeStatus.paidRentThisMonth || 0) + (activeStatus.priorRentCredit || 0),
+    (activeStatus.paidRentThisMonth || 0),
     rentPaymentsForPeriod
   );
 
@@ -298,8 +371,64 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
     recipientId = [property.tenant1.idNumber, property.tenant2.idNumber].filter(Boolean).join(' / ');
   }
 
-  // Financial breakdown depending on invoice mode
-  const rent = property.rentAmount;
+  // Consult audited ledger - single source of truth for running balances and utility balances
+  const histData = useMemo(() => {
+    return generatePropertyHistoricalData(
+      property,
+      propertyPayments,
+      new Date(),
+      true,
+      property.utilitiesWaterActive ?? false,
+      property.utilitiesElectricActive ?? false,
+      property.utilitiesMaintenanceActive ?? false,
+      false,
+      [],
+      admin
+    );
+  }, [property, propertyPayments, admin]);
+
+  // Target cycle rent calculation (respecting rent schedules and stepped rates)
+  const targetDueDateObj = new Date(targetYearNum, targetMonthNum, property.rentDueDay || 1, 0, 0, 0, 0);
+  const cycleRentPrice = getPropertyRentForDate(property, targetDueDateObj);
+  const currentRentBilled = isNextMonth ? cycleRentPrice : isRentDueReached ? cycleRentPrice : 0;
+  const rent = cycleRentPrice;
+
+  // Prior rent balance and prior credit from the audited ledger running balance
+  let priorRentBalance = 0;
+  let priorRentCredit = 0;
+
+  if (isNextMonth) {
+    if (histData.rentFinalBalance > 0) {
+      priorRentBalance = histData.rentFinalBalance;
+    } else if (histData.rentFinalBalance < 0) {
+      priorRentCredit = Math.abs(histData.rentFinalBalance);
+    }
+  } else {
+    const targetOblIndex = histData.rentEntries.findIndex(
+      (e) => !e.isPayment && e.cycleYear === targetYearNum && e.cycleMonth === targetMonthNum
+    );
+    let balanceBeforeCycle = 0;
+    if (targetOblIndex > 0) {
+      balanceBeforeCycle = histData.rentEntries[targetOblIndex - 1].runningBalance;
+    } else if (targetOblIndex === 0) {
+      balanceBeforeCycle = 0;
+    } else {
+      balanceBeforeCycle = histData.rentFinalBalance;
+    }
+
+    if (balanceBeforeCycle > 0) {
+      priorRentBalance = balanceBeforeCycle;
+    } else if (balanceBeforeCycle < 0) {
+      priorRentCredit = Math.abs(balanceBeforeCycle);
+    }
+  }
+
+  // Pending utilities strictly from audited historical ledger (no estimating unbilled future utilities)
+  const pendingWater = property.utilitiesWaterActive ? Math.max(0, histData.waterFinalBalance) : 0;
+  const pendingElectric = property.utilitiesElectricActive ? Math.max(0, histData.electricFinalBalance) : 0;
+  const pendingMaintenance = property.utilitiesMaintenanceActive ? Math.max(0, histData.maintenanceFinalBalance) : 0;
+  const totalPendingUtilities = pendingWater + pendingElectric + pendingMaintenance;
+
   const isUtilityActive = Boolean(property.utilitiesWaterActive || property.utilitiesElectricActive || property.utilitiesMaintenanceActive);
   const periodUtils = getPropertyUtilitiesForPeriod(property, invoicePeriodKey);
   const lastMonthWater = property.utilitiesWaterActive ? periodUtils.waterAmount : 0;
@@ -307,69 +436,44 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   const lastMonthMaintenance = property.utilitiesMaintenanceActive ? periodUtils.maintenanceAmount : 0;
   const lastMonthUtilitiesTotal = lastMonthWater + lastMonthElectric + lastMonthMaintenance;
 
-  // Active rent charge for this invoice:
-  // - If isNextMonth (advance notice): rent IS included because it informs the upcoming due date
-  // - If current invoice and isRentDueReached: rent IS included as active charge
-  // - If current invoice and !isRentDueReached: rent has NOT arrived yet, so active charge on this invoice is 0!
-  const currentRentBilled = isNextMonth ? rent : isRentDueReached ? rent : 0;
+  const waterAmount = pendingWater;
+  const electricAmount = pendingElectric;
+  const maintenanceAmount = pendingMaintenance;
 
-  // Resolves the most recent utility amounts for all concepts that apply to this property:
-  const mostRecentWater = property.utilitiesWaterActive
-    ? (periodUtils.waterAmount > 0 ? periodUtils.waterAmount : (activeStatus.waterAmount > 0 ? activeStatus.waterAmount : Number(property.utilitiesWaterAmount) || 0))
-    : 0;
-  const mostRecentElectric = property.utilitiesElectricActive
-    ? (periodUtils.electricAmount > 0 ? periodUtils.electricAmount : (activeStatus.electricAmount > 0 ? activeStatus.electricAmount : Number(property.utilitiesElectricAmount) || 0))
-    : 0;
-  const mostRecentMaintenance = property.utilitiesMaintenanceActive
-    ? (periodUtils.maintenanceAmount > 0 ? periodUtils.maintenanceAmount : (activeStatus.maintenanceAmount > 0 ? activeStatus.maintenanceAmount : Number(property.utilitiesMaintenanceAmount) || 0))
-    : 0;
-
-  // In invoices and advance notices, always reflect the most recent utility amounts if they apply:
-  const waterAmount = isNextMonth
-    ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0 ? nextPeriodInfo.unpaidWaterCurrent : mostRecentWater)
-    : (activeStatus.waterAmount > 0 ? activeStatus.waterAmount : mostRecentWater);
-  const electricAmount = isNextMonth
-    ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0 ? nextPeriodInfo.unpaidElectricCurrent : mostRecentElectric)
-    : (activeStatus.electricAmount > 0 ? activeStatus.electricAmount : mostRecentElectric);
-  const maintenanceAmount = isNextMonth
-    ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidMaintenanceCurrent || 0) > 0 ? nextPeriodInfo.unpaidMaintenanceCurrent : mostRecentMaintenance)
-    : (activeStatus.maintenanceAmount > 0 ? activeStatus.maintenanceAmount : mostRecentMaintenance);
-
-  const prevBalance = isNextMonth
-    ? nextPeriodInfo?.accumulatedPreviousBalance || 0
-    : activeStatus.previousBalance;
+  const prevBalance = priorRentBalance;
   const baseLateFee = isNextMonth || isPaymentReceipt || !isRentDueReached ? 0 : activeStatus.calculatedLateFeeBase;
   const dailyLateFee = isNextMonth || isPaymentReceipt || !isRentDueReached ? 0 : activeStatus.calculatedLateFeeDaily;
   const daysOverdue = isNextMonth || isPaymentReceipt || !isRentDueReached ? 0 : activeStatus.daysOverdue;
-  // Payments applied for THIS cycle / monthly invoice (excluding deposit and past months):
-  const cyclePaymentsThisMonth =
-    (activeStatus.paidRentThisMonth || 0) +
-    (activeStatus.paidWaterThisMonth || 0) +
-    (activeStatus.paidElectricThisMonth || 0) +
-    (activeStatus.paidMaintenanceThisMonth || 0) +
-    (activeStatus.paidLateFeesThisMonth || 0);
 
-  const paymentsMatchedByPeriod = propertyPayments
-    .filter(
-      (p) =>
-        (p.period && p.period.toLowerCase().trim() === activePeriod.toLowerCase().trim()) ||
-        (p.date && p.date.startsWith(invoicePeriodKey))
-    )
-    .filter((p) => p.concept !== 'deposito' && !p.appliedToDeposit)
-    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  // Payments applied strictly for THIS cycle's rent & late fee obligations (excluding utilities and deposits):
+  const directCyclePaidAmount = paidRentDetail + paidLateFeeDetail;
 
-  const currentCyclePaidAmount = Math.max(cyclePaymentsThisMonth, paymentsMatchedByPeriod);
+  const advancePaymentsNextMonth = isNextMonth ? directCyclePaidAmount : 0;
+  const currentCyclePaidAmount = directCyclePaidAmount;
 
-  const paidAmount = isNextMonth
-    ? nextPeriodInfo?.advancePayments || 0
-    : isPaymentReceipt
+  const paidAmount = isPaymentReceipt
     ? activePayment?.amount || 0
+    : isNextMonth
+    ? advancePaymentsNextMonth
     : currentCyclePaidAmount;
-  const totalDue = isNextMonth
-    ? (nextPeriodInfo?.totalDueNextMonth ?? property.rentAmount)
-    : hasPaidRentForPeriod && activeStatus.totalPendingBalance <= 0
-    ? 0
-    : activeStatus.totalPendingBalance;
+
+  const invoicePendingWater = pendingWater;
+  const invoicePendingElectric = pendingElectric;
+  const invoicePendingMaint = pendingMaintenance;
+  const invoicePendingUtilities = totalPendingUtilities;
+
+  const invoiceLateFees = (!isNextMonth && !isPaymentReceipt && isRentDueReached) ? (baseLateFee + dailyLateFee) : 0;
+  const invoicePaidThisPeriod = (!isNextMonth && !isPaymentReceipt) ? directCyclePaidAmount : advancePaymentsNextMonth;
+
+  // Net calculations matching the ledger column Balance Calculado
+  const netRentAndLateDue = Math.max(
+    0,
+    currentRentBilled + priorRentBalance + invoiceLateFees - (isNextMonth ? advancePaymentsNextMonth : directCyclePaidAmount) - priorRentCredit
+  );
+
+  const totalDue = isPaymentReceipt
+    ? (activePayment?.amount || 0)
+    : (netRentAndLateDue + totalPendingUtilities);
 
   // Grace date computation string for active period
   const graceDays = Math.max(0, Number(property.graceDays) ?? 3);
@@ -458,12 +562,12 @@ Estimado/a *${recipientName}*, le enviamos con anticipación los datos correspon
 
 💰 *DESGLOSE DE CARGOS:*
 ▪️ Renta convenida en contrato: ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `💧 Utilidad de Agua (${nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0 ? 'Pendiente mes corriente' : 'Consumo mas reciente'}): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ Utilidad de Electricidad (LUMA / AEE) (${nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0 ? 'Pendiente mes corriente' : 'Consumo mas reciente'}): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `🛠️ Cuota de Mantenimiento (${nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidMaintenanceCurrent || 0) > 0 ? 'Pendiente mes corriente' : 'Importe mas reciente'}): ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Saldo pendiente anterior acumulado: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos anticipados registrados: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && pendingWater > 0 ? `💧 Utilidad de Agua (Balance Actual): ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && pendingElectric > 0 ? `⚡ Utilidad de Electricidad (LUMA / AEE) (Balance Actual): ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && pendingMaintenance > 0 ? `🛠️ Cuota de Mantenimiento (Balance Actual): ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}${priorRentBalance > 0 ? `▪️ Balance pendiente de periodos previos por Renta y/o Moras: ${formatCurrency(priorRentBalance, admin.currencySymbol)}\n` : ''}${advancePaymentsNextMonth > 0 ? `▪️ Abonos anticipados registrados: -${formatCurrency(advancePaymentsNextMonth, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL PRELIMINAR A PAGAR: ${formatCurrency(totalDue, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${isUtilityActive ? nextPeriodInfo?.hasUnpaidUtilities ? `💡 *NOTA SOBRE UTILIDADES:*
-Se incluyen en el total a pagar las utilidades pendientes de liquidar del mes corriente (Agua: ${formatCurrency(waterAmount, admin.currencySymbol)}, Luz: ${formatCurrency(electricAmount, admin.currencySymbol)}). El consumo nuevo de este próximo ciclo variará según el consumo real y se notificará cuando los proveedores emitan la próxima factura.\n\n` : `💡 *NOTA SOBRE UTILIDADES (Consumo Variable):*
+${isUtilityActive ? totalPendingUtilities > 0 ? `💡 *NOTA SOBRE UTILIDADES:*
+Se incluyen en el total a pagar las utilidades pendientes de liquidar (Agua: ${formatCurrency(pendingWater, admin.currencySymbol)}, Luz: ${formatCurrency(pendingElectric, admin.currencySymbol)}). El consumo nuevo de este próximo ciclo variará según el consumo real y se notificará cuando los proveedores emitan la próxima factura.\n\n` : `💡 *NOTA SOBRE UTILIDADES (Consumo Variable):*
 En la última factura recibida el costo de utilidades fue de ${formatCurrency(lastMonthUtilitiesTotal, admin.currencySymbol)}${property.utilitiesWaterActive && property.utilitiesElectricActive ? ` (Agua: ${formatCurrency(lastMonthWater, admin.currencySymbol)}, Luz: ${formatCurrency(lastMonthElectric, admin.currencySymbol)})` : ''}.
 El costo para este próximo periodo es variable según el consumo real y no se suma a este total preliminar; cuando llegue la próxima factura de los proveedores se le indicará y agregará la cantidad a pagar por dicho concepto.\n\n` : ''}ℹ️ *Recordatorio de vencimiento:*
 Su fecha límite de pago es el *${formatDate(activeDueDate)}*. Cuenta con ${property.graceDays} días de gracia para efectuar su pago sin recargos por mora.
@@ -483,7 +587,7 @@ Estimado/a *${recipientName}*, confirmamos la recepción y registro de su pago d
 🗓️ *Periodo cubierto:* ${activePeriod}
 🏠 *Propiedad:* ${property.propertyIdentifier}
 💰 *Renta mensual:* ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `💧 *Utilidad de Agua (Consumo mas reciente):* ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ *Utilidad Electricidad (LUMA / AEE) (Consumo mas reciente):* ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `🛠️ *Cuota de Mantenimiento:* ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}💵 *Importe liquidado:* ${formatCurrency(paidAmount, admin.currencySymbol)}
+${property.utilitiesWaterActive && pendingWater > 0 ? `💧 *Utilidad de Agua (Balance Actual):* ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && pendingElectric > 0 ? `⚡ *Utilidad Electricidad (LUMA / AEE) (Balance Actual):* ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && pendingMaintenance > 0 ? `🛠️ *Cuota de Mantenimiento (Balance Actual):* ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}💵 *Importe liquidado:* ${formatCurrency(paidAmount, admin.currencySymbol)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ *ESTATUS: CUENTA AL DÍA - PAGADA EN SU TOTALIDAD*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -506,13 +610,13 @@ ${admin.invoiceNote ? `Nota: ${admin.invoiceNote}\n\n` : ''}🙏 Muchas gracias 
 💰 *DESGLOSE DE CARGOS AL DÍA DE HOY:*
 ▪️ Renta mensual pactada: ${formatCurrency(rent, admin.currencySymbol)} (Aún no exigible - Su ciclo inicia el ${formatDate(activeDueDate)})
 ▪️ Cargo de renta exigible hoy: ${formatCurrency(0, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `💧 Utilidad de Agua (Consumo mas reciente): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `⚡ Utilidad de Electricidad (LUMA / AEE) (Consumo mas reciente): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `🛠️ Cuota de Mantenimiento: ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Balances atrasados no pagados de meses anteriores: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos registrados: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && pendingWater > 0 ? `💧 Utilidad de Agua (Balance Actual): ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && pendingElectric > 0 ? `⚡ Utilidad de Electricidad (LUMA / AEE) (Balance Actual): ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && pendingMaintenance > 0 ? `🛠️ Cuota de Mantenimiento (Balance Actual): ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}${priorRentBalance > 0 ? `▪️ Balance pendiente de periodos previo por Renta y/o Cargos por pago moroso: ${formatCurrency(priorRentBalance, admin.currencySymbol)}\n` : ''}${directCyclePaidAmount > 0 ? `▪️ Abonos registrados en el periodo: -${formatCurrency(directCyclePaidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL ACTUAL A PAGAR: ${formatCurrency(totalDue, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ℹ️ *Términos de su Renta:*
 Su renta correspondiente a este ciclo tiene como fecha convenida de vencimiento el *${formatDate(activeDueDate)}*. Cuenta con *${property.graceDays} días de gracia* para realizar su pago sin cargos por demora hasta el *${formatDate(graceDateStr)}*.
-${totalDue > 0 ? `El importe actual a pagar de ${formatCurrency(totalDue, admin.currencySymbol)} corresponde a los conceptos de utilidades según factura recibida del proveedor.\n\n` : 'Al día de hoy no presenta cargos exigibles pendientes por liquidar.\n\n'}🏦 *DATOS BANCARIOS PARA PAGO / TRANSFERENCIA:*
+${totalDue > 0 ? `El importe actual a pagar de ${formatCurrency(totalDue, admin.currencySymbol)} corresponde a los balances pendientes según facturación.\n\n` : 'Al día de hoy no presenta cargos exigibles pendientes por liquidar.\n\n'}🏦 *DATOS BANCARIOS PARA PAGO / TRANSFERENCIA:*
 ${admin.bankDetails}
 
 ${admin.invoiceNote ? `Nota: ${admin.invoiceNote}\n\n` : ''}🙏 Agradecemos su puntualidad y cumplimiento.`;
@@ -530,7 +634,7 @@ ${admin.invoiceNote ? `Nota: ${admin.invoiceNote}\n\n` : ''}🙏 Agradecemos su 
 
 💰 *DESGLOSE DE CARGOS:*
 ▪️ Renta del periodo: ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `▪️ Utilidad de Agua (Consumo mas reciente): ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `▪️ Utilidad de Electricidad (LUMA / AEE) (Consumo mas reciente): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `▪️ Cuota de Mantenimiento: ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `▪️ Balances atrasados no pagados: ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `▪️ Cargo base por atraso: ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `▪️ Demora diaria (${activeStatus.effectiveDailyDays ?? daysOverdue} días tras gracia${activeStatus.lateFeeCapNotice ? ` - ${activeStatus.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `▪️ Abonos registrados en el mes: -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
+${property.utilitiesWaterActive && pendingWater > 0 ? `▪️ Utilidad de Agua (Balance Actual): ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && pendingElectric > 0 ? `▪️ Utilidad de Electricidad (LUMA / AEE) (Balance Actual): ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && pendingMaintenance > 0 ? `▪️ Cuota de Mantenimiento (Balance Actual): ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}${priorRentBalance > 0 ? `▪️ Balance pendiente de periodos previo por Renta y/o Cargos por pago moroso: ${formatCurrency(priorRentBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `▪️ Cargo base por atraso: ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `▪️ Demora diaria (${activeStatus.effectiveDailyDays ?? daysOverdue} días tras gracia${activeStatus.lateFeeCapNotice ? ` - ${activeStatus.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${directCyclePaidAmount > 0 ? `▪️ Abonos registrados en el periodo: -${formatCurrency(directCyclePaidAmount, admin.currencySymbol)}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━
 💵 *TOTAL A PAGAR: ${formatCurrency(totalDue, admin.currencySymbol)}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -592,18 +696,18 @@ TOTAL ADEUDADO:                           ${formatCurrency(activeStatus.totalPen
 
 ${activePayment.applicationFootnote ? `NOTA AL CALCE:\n${activePayment.applicationFootnote}\n` : ''}` : !isRentDueReached && !isNextMonth ? `• Renta mensual convenida:                  ${formatCurrency(rent, admin.currencySymbol)} (Inicia el ${formatDate(activeDueDate)} - Aún no exigible)
 • Cargo activo de renta hoy:                ${formatCurrency(0, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `• Utilidad de Agua (Consumo mas reciente):   ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `• Utilidad de Electricidad (LUMA / AEE) (Consumo mas reciente):     ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `• Cuota de Mantenimiento:                 ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `• Balances atrasados no pagados:            ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `• Abonos registrados:                     -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
+${property.utilitiesWaterActive && pendingWater > 0 ? `• Utilidad de Agua (Balance Actual):           ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && pendingElectric > 0 ? `• Utilidad de Electricidad (Balance Actual):   ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && pendingMaintenance > 0 ? `• Cuota de Mantenimiento (Balance Actual):       ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}${priorRentBalance > 0 ? `• Balance pendiente de periodos previo:       ${formatCurrency(priorRentBalance, admin.currencySymbol)}\n` : ''}${directCyclePaidAmount > 0 ? `• Abonos registrados en el periodo:          -${formatCurrency(directCyclePaidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
 TOTAL A PAGAR AL DÍA DE HOY:                  ${formatCurrency(totalDue, admin.currencySymbol)}
 ------------------------------------------------------
 TÉRMINOS DE PAGO DE RENTA:
 - Fecha convenida de vencimiento: ${formatDate(activeDueDate)} (Día ${property.rentDueDay} de cada mes).
 - Días de gracia para pago sin recargos: ${property.graceDays} días (hasta el ${formatDate(graceDateStr)}).` : `• Renta mensual convenida (${activePeriod}): ${formatCurrency(rent, admin.currencySymbol)}
-${property.utilitiesWaterActive && waterAmount > 0 ? `• Utilidad de Agua (${isNextMonth && nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0 ? 'Pendiente mes corriente' : 'Consumo mas reciente'}):   ${formatCurrency(waterAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && electricAmount > 0 ? `• Utilidad de Electricidad (LUMA / AEE) (${isNextMonth && nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0 ? 'Pendiente mes corriente' : 'Consumo mas reciente'}): ${formatCurrency(electricAmount, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && maintenanceAmount > 0 ? `• Cuota de Mantenimiento:                 ${formatCurrency(maintenanceAmount, admin.currencySymbol)}\n` : ''}${prevBalance > 0 ? `• Balances atrasados no pagados:            ${formatCurrency(prevBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `• Cargo base por mora (tras ${property.graceDays} días de gracia): ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `• Demora diaria (${activeStatus.effectiveDailyDays ?? daysOverdue} días tras gracia${activeStatus.lateFeeCapNotice ? ` - ${activeStatus.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${paidAmount > 0 ? `• Pagos / Abonos aplicados:               -${formatCurrency(paidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
+${property.utilitiesWaterActive && pendingWater > 0 ? `• Utilidad de Agua (Balance Actual):           ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive && pendingElectric > 0 ? `• Utilidad de Electricidad (Balance Actual):   ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive && pendingMaintenance > 0 ? `• Cuota de Mantenimiento (Balance Actual):       ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}${priorRentBalance > 0 ? `• Balance pendiente de periodos previo:       ${formatCurrency(priorRentBalance, admin.currencySymbol)}\n` : ''}${baseLateFee > 0 ? `• Cargo base por mora (tras ${property.graceDays} días de gracia): ${formatCurrency(baseLateFee, admin.currencySymbol)}\n` : ''}${dailyLateFee > 0 ? `• Demora diaria (${activeStatus.effectiveDailyDays ?? daysOverdue} días tras gracia${activeStatus.lateFeeCapNotice ? ` - ${activeStatus.lateFeeCapNotice}` : ''}): ${formatCurrency(dailyLateFee, admin.currencySymbol)}\n` : ''}${(isNextMonth ? advancePaymentsNextMonth : directCyclePaidAmount) > 0 ? `• Pagos / Abonos aplicados:               -${formatCurrency(isNextMonth ? advancePaymentsNextMonth : directCyclePaidAmount, admin.currencySymbol)}\n` : ''}------------------------------------------------------
 ${isCurrentPaid ? 'TOTAL LIQUIDADO:' : 'TOTAL A PAGAR:'}                             ${formatCurrency(isCurrentPaid ? paidAmount : totalDue, admin.currencySymbol)}
 ------------------------------------------------------
 BALANCES PENDIENTES SEGREGADOS:
 - Renta pendiente:                        ${formatCurrency(activeStatus.pendingRentBalance, admin.currencySymbol)}
-${property.utilitiesWaterActive ? `- Agua pendiente:                         ${formatCurrency(activeStatus.pendingWaterBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `- Electricidad (LUMA / AEE) pendiente:    ${formatCurrency(activeStatus.pendingElectricBalance, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive ? `- Cuota Mantenimiento pendiente:          ${formatCurrency(activeStatus.pendingMaintenanceBalance, admin.currencySymbol)}\n` : ''}`}
+${property.utilitiesWaterActive ? `- Agua pendiente:                         ${formatCurrency(pendingWater, admin.currencySymbol)}\n` : ''}${property.utilitiesElectricActive ? `- Electricidad (LUMA / AEE) pendiente:    ${formatCurrency(pendingElectric, admin.currencySymbol)}\n` : ''}${property.utilitiesMaintenanceActive ? `- Cuota Mantenimiento pendiente:          ${formatCurrency(pendingMaintenance, admin.currencySymbol)}\n` : ''}`}
 ${isNextMonth && isUtilityActive ? nextPeriodInfo?.hasUnpaidUtilities ? `\nNOTA SOBRE UTILIDADES:\nSe incluyen en el total a pagar las utilidades pendientes de liquidar del mes corriente (Agua: ${formatCurrency(waterAmount, admin.currencySymbol)}, Luz: ${formatCurrency(electricAmount, admin.currencySymbol)}). El consumo nuevo de este próximo ciclo variará según el consumo real y se notificará cuando los proveedores emitan la próxima factura.\n` : `\nNOTA SOBRE UTILIDADES:\nEn la última factura recibida el costo de utilidades fue de ${formatCurrency(lastMonthUtilitiesTotal, admin.currencySymbol)}${property.utilitiesWaterActive && property.utilitiesElectricActive ? ` (Agua: ${formatCurrency(lastMonthWater, admin.currencySymbol)}, Luz: ${formatCurrency(lastMonthElectric, admin.currencySymbol)})` : ''}. El costo para este próximo ciclo variará según el consumo real y se agregará una vez recibida la factura del proveedor.\n` : ''}${isNextMonth ? `\nRECORDATORIO IMPORTANTE:\nLe recordamos que el pago de su renta vence el ${formatDate(activeDueDate)}. Cuenta con ${property.graceDays} días de gracia para no generar recargos.\n` : ''}
 DATOS BANCARIOS PARA PAGO O TRANSFERENCIA:
 ${admin.bankDetails}
@@ -1664,6 +1768,29 @@ Tel: ${admin.phone} | ${admin.email}`;
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
+                    {/* 0. Atrasos de Periodos Anteriores Vencidos (Renta y/o Cargos por Mora) */}
+                    {prevBalance > 0 && (
+                      <tr className="bg-amber-50/50">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1.5 font-semibold text-amber-950">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Balance pendiente de periodos previo por Renta y/o Cargos por pago moroso</span>
+                          </div>
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            {isNextMonth
+                              ? 'Saldo no liquidado arrastrado de ciclos contractuales previos'
+                              : 'Saldos atrasados no liquidados de rentas, moras o utilidades previas'}
+                          </p>
+                        </td>
+                        <td className="py-2.5 px-3 text-center text-amber-800 font-medium">
+                          antes del {activePeriod}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-semibold text-amber-950">
+                          {formatCurrency(prevBalance, admin.currencySymbol)}
+                        </td>
+                      </tr>
+                    )}
+
                     {/* 1. Monthly Rent */}
                     <tr>
                       <td className="py-2.5 px-3">
@@ -1671,8 +1798,10 @@ Tel: ${admin.phone} | ${admin.email}`;
                           <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                           <span>
                             {isNextMonth
-                              ? `Renta Mensual del Próximo Ciclo (${rentDateRange})`
-                              : `Renta Mensual de Arrendamiento (${rentDateRange})`}
+                              ? `Renta a pagar para el proximo periodo (${rentDateRange})`
+                              : (!hasPaidRentForPeriod
+                                ? `Renta mensual no pagada del periodo (${rentDateRange})`
+                                : `Renta mensual de arrendamiento (${rentDateRange})`)}
                           </span>
                           {!isNextMonth && !isRentDueReached && (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
@@ -1712,34 +1841,30 @@ Tel: ${admin.phone} | ${admin.email}`;
                         </td>
                       </tr>
                     )}
-                    {property.utilitiesWaterActive && (!isNextMonth ? currUtils.waterAmount > 0 : waterAmount > 0) && (
+                    {property.utilitiesWaterActive && (!isNextMonth ? (currUtils.waterAmount > 0 || pendingWater > 0) : pendingWater > 0) && (
                       <tr className="bg-sky-50/30">
                         <td className="py-2.5 px-3">
                           <div className="flex items-center gap-1.5 font-semibold text-sky-950">
                             <Droplets className="w-3.5 h-3.5 text-sky-600" />
                             <span>
                               {isNextMonth
-                                ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0
-                                    ? 'Utilidad de Agua Potable (Pendiente mes corriente)'
-                                    : 'Utilidad de Agua Potable (Consumo mas reciente)')
-                                : `Utilidad de Agua Potable - Mes Actual (Cierre: ${formatDate(currWaterDate)})`}
+                                ? 'Utilidad de Agua Potable (Balance Actual)'
+                                : currUtils.waterAmount > 0
+                                ? `Utilidad de Agua Potable - Mes Actual (Cierre: ${formatDate(currWaterDate)})`
+                                : 'Utilidad de Agua Potable (Balance Actual)'}
                             </span>
                           </div>
                           <p className="text-[11px] text-sky-800">
                             {isNextMonth
-                              ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0
-                                  ? 'Cargo de agua pendiente de pago del mes corriente incorporado al balance a pagar'
-                                  : 'Consumo mas reciente según factura de proveedor')
-                              : 'Factura actual de utilidad dentro del ciclo de renta (cierre del mes servido)'}
+                              ? 'Balance de agua pendiente de liquidar incorporado al total a pagar'
+                              : 'Factura actual de utilidad dentro del ciclo de renta'}
                           </p>
                         </td>
                         <td className="py-2.5 px-3 text-center text-sky-800">
-                          {isNextMonth
-                            ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0 ? 'Mes corriente' : 'Consumo mas reciente')
-                            : `Cierre: ${formatDate(currWaterDate)}`}
+                          {isNextMonth ? 'Balance Actual' : `Cierre: ${formatDate(currWaterDate)}`}
                         </td>
                         <td className="py-2.5 px-3 text-right font-semibold text-sky-900">
-                          {formatCurrency(isNextMonth ? waterAmount : currUtils.waterAmount, admin.currencySymbol)}
+                          {formatCurrency(isNextMonth ? pendingWater : (currUtils.waterAmount > 0 ? currUtils.waterAmount : pendingWater), admin.currencySymbol)}
                         </td>
                       </tr>
                     )}
@@ -1760,34 +1885,30 @@ Tel: ${admin.phone} | ${admin.email}`;
                         </td>
                       </tr>
                     )}
-                    {property.utilitiesElectricActive && (!isNextMonth ? currUtils.electricAmount > 0 : electricAmount > 0) && (
+                    {property.utilitiesElectricActive && (!isNextMonth ? (currUtils.electricAmount > 0 || pendingElectric > 0) : pendingElectric > 0) && (
                       <tr className="bg-amber-50/30">
                         <td className="py-2.5 px-3">
                           <div className="flex items-center gap-1.5 font-semibold text-amber-950">
                             <Zap className="w-3.5 h-3.5 text-amber-600" />
                             <span>
                               {isNextMonth
-                                ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0
-                                    ? 'Utilidad de Electricidad (LUMA / AEE) (Pendiente mes corriente)'
-                                    : 'Utilidad de Electricidad (LUMA / AEE) (Consumo mas reciente)')
-                                : `Utilidad de Electricidad (LUMA / AEE) - Mes Actual (Cierre: ${formatDate(currElectricDate)})`}
+                                ? 'Utilidad de Electricidad (LUMA / AEE) (Balance Actual)'
+                                : currUtils.electricAmount > 0
+                                ? `Utilidad de Electricidad (LUMA / AEE) - Mes Actual (Cierre: ${formatDate(currElectricDate)})`
+                                : 'Utilidad de Electricidad (LUMA / AEE) (Balance Actual)'}
                             </span>
                           </div>
                           <p className="text-[11px] text-amber-800">
                             {isNextMonth
-                              ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0
-                                  ? 'Cargo de electricidad pendiente de pago del mes corriente incorporado al balance a pagar'
-                                  : 'Consumo mas reciente según factura de proveedor')
-                              : 'Factura actual de electricidad dentro del ciclo de renta (cierre del mes servido)'}
+                              ? 'Balance de electricidad pendiente de liquidar incorporado al total a pagar'
+                              : 'Factura actual de electricidad dentro del ciclo de renta'}
                           </p>
                         </td>
                         <td className="py-2.5 px-3 text-center text-amber-800">
-                          {isNextMonth
-                            ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0 ? 'Mes corriente' : 'Consumo mas reciente')
-                            : `Cierre: ${formatDate(currElectricDate)}`}
+                          {isNextMonth ? 'Balance Actual' : `Cierre: ${formatDate(currElectricDate)}`}
                         </td>
                         <td className="py-2.5 px-3 text-right font-semibold text-amber-900">
-                          {formatCurrency(isNextMonth ? electricAmount : currUtils.electricAmount, admin.currencySymbol)}
+                          {formatCurrency(isNextMonth ? pendingElectric : (currUtils.electricAmount > 0 ? currUtils.electricAmount : pendingElectric), admin.currencySymbol)}
                         </td>
                       </tr>
                     )}
@@ -1807,57 +1928,32 @@ Tel: ${admin.phone} | ${admin.email}`;
                         </td>
                       </tr>
                     )}
-                    {property.utilitiesMaintenanceActive && (!isNextMonth ? currUtils.maintenanceAmount > 0 : maintenanceAmount > 0) && (
+                    {property.utilitiesMaintenanceActive && (!isNextMonth ? (currUtils.maintenanceAmount > 0 || pendingMaintenance > 0) : pendingMaintenance > 0) && (
                       <tr className="bg-purple-50/40">
                         <td className="py-2.5 px-3">
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-purple-900">
                               {isNextMonth
-                                ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidMaintenanceCurrent || 0) > 0
-                                    ? 'Cuota de Mantenimiento / Residentes (Pendiente mes corriente)'
-                                    : 'Cuota de Mantenimiento / Residentes (Importe mas reciente)')
-                                : `Cuota de Mantenimiento - Mes Actual (Cierre: ${formatDate(currMaintDate)})`}
+                                ? 'Cuota de Mantenimiento / Residentes (Balance Actual)'
+                                : currUtils.maintenanceAmount > 0
+                                ? `Cuota de Mantenimiento - Mes Actual (Cierre: ${formatDate(currMaintDate)})`
+                                : 'Cuota de Mantenimiento / Residentes (Balance Actual)'}
                             </span>
                           </div>
                           <p className="text-[11px] text-purple-800">
                             {isNextMonth
-                              ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidMaintenanceCurrent || 0) > 0
-                                  ? 'Cuota de mantenimiento pendiente del mes corriente'
-                                  : 'Cuota contractual según registro más reciente')
+                              ? 'Cuota de mantenimiento pendiente de liquidar incorporada al total a pagar'
                               : 'Cuota actual de mantenimiento dentro del ciclo de renta'}
                           </p>
                         </td>
                         <td className="py-2.5 px-3 text-center text-purple-800">
-                          {isNextMonth
-                            ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidMaintenanceCurrent || 0) > 0 ? 'Mes corriente' : 'Cuota mas reciente')
-                            : `Cierre: ${formatDate(currMaintDate)}`}
+                          {isNextMonth ? 'Balance Actual' : `Cierre: ${formatDate(currMaintDate)}`}
                         </td>
                         <td className="py-2.5 px-3 text-right font-semibold text-purple-900">
-                          {formatCurrency(isNextMonth ? maintenanceAmount : currUtils.maintenanceAmount, admin.currencySymbol)}
+                          {formatCurrency(isNextMonth ? pendingMaintenance : (currUtils.maintenanceAmount > 0 ? currUtils.maintenanceAmount : pendingMaintenance), admin.currencySymbol)}
                         </td>
                       </tr>
                     )}
-
-                    {/* 4. Previous Balances (if any) */}
-                    {prevBalance > 0 && (
-                      <tr className="bg-amber-50/40">
-                        <td className="py-2.5 px-3">
-                          <p className="font-semibold text-amber-900">
-                            {isNextMonth ? 'Saldo Pendiente Anterior Acumulado' : 'Balances Atrasados No Pagados'}
-                          </p>
-                          <p className="text-[11px] text-amber-700">
-                            {isNextMonth
-                              ? 'Saldo no liquidado arrastrado de meses previos a la emisión'
-                              : 'Saldos atrasados no liquidados de rentas, moras o utilidades previas'}
-                          </p>
-                        </td>
-                        <td className="py-2.5 px-3 text-center text-amber-800">Saldo impago</td>
-                        <td className="py-2.5 px-3 text-right font-semibold text-amber-900">
-                          {formatCurrency(prevBalance, admin.currencySymbol)}
-                        </td>
-                      </tr>
-                    )}
-
                     {/* 5. Base Late Fee */}
                     {!isNextMonth && baseLateFee > 0 && (
                       <tr className="bg-rose-50/40">
@@ -1894,7 +1990,7 @@ Tel: ${admin.phone} | ${admin.email}`;
                     )}
 
                     {/* 7. Detailed Payments Applied */}
-                    {paidAmount > 0 && (
+                    {(!isNextMonth ? directCyclePaidAmount > 0 : advancePaymentsNextMonth > 0) && (
                       <>
                         {!isNextMonth && paidRentDetail > 0 && (
                           <tr className="bg-emerald-50/40">
@@ -1956,17 +2052,17 @@ Tel: ${admin.phone} | ${admin.email}`;
                             </td>
                           </tr>
                         )}
-                        {(isNextMonth || (paidRentDetail === 0 && paidLateFeeDetail === 0 && paidWaterDetail === 0 && paidElectricDetail === 0 && paidMaintenanceDetail === 0)) && (
+                        {((isNextMonth && advancePaymentsNextMonth > 0) || (!isNextMonth && paidRentDetail === 0 && paidLateFeeDetail === 0 && paidWaterDetail === 0 && paidElectricDetail === 0 && paidMaintenanceDetail === 0 && directCyclePaidAmount > 0)) && (
                           <tr className="bg-emerald-50/40">
                             <td className="py-2.5 px-3">
                               <p className="font-semibold text-emerald-900">
-                                {isNextMonth ? 'Abonos Anticipados Registrados' : 'Abonos / Pagos Registrados'}
+                                {isNextMonth ? 'Abonos Anticipados Registrados' : 'Abono / Pago Registrado en el Periodo'}
                               </p>
-                              <p className="text-[11px] text-emerald-700">Crédito aplicado a la cuenta en el periodo</p>
+                              <p className="text-[11px] text-emerald-700">Crédito aplicado a la cuenta en el periodo evaluado</p>
                             </td>
                             <td className="py-2.5 px-3 text-center text-emerald-800">{isNextMonth ? 'Anticipado' : 'Abono'}</td>
                             <td className="py-2.5 px-3 text-right font-semibold text-emerald-900">
-                              -{formatCurrency(paidAmount, admin.currencySymbol)}
+                              -{formatCurrency(isNextMonth ? advancePaymentsNextMonth : directCyclePaidAmount, admin.currencySymbol)}
                             </td>
                           </tr>
                         )}
@@ -2012,63 +2108,61 @@ Tel: ${admin.phone} | ${admin.email}`;
                 {/* Segregated utility lines in invoice summary */}
                 {property.utilitiesWaterActive && (
                   <div className="flex justify-between py-1 border-b border-slate-200 text-sky-800">
-                    <span>
-                      {isNextMonth
-                        ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidWaterCurrent || 0) > 0
-                          ? 'Utilidad de Agua (Balance Actual):'
-                          : 'Utilidad de Agua:')
-                        : 'Balance Pendiente de Agua:'}
-                    </span>
+                    <span>Utilidad de Agua (Balance Actual):</span>
                     <span className="font-medium">
-                      {formatCurrency(isNextMonth ? waterAmount : activeStatus.pendingWaterBalance, admin.currencySymbol)}
+                      {formatCurrency(pendingWater, admin.currencySymbol)}
                     </span>
                   </div>
                 )}
                 {property.utilitiesElectricActive && (
                   <div className="flex justify-between py-1 border-b border-slate-200 text-amber-800">
-                    <span>
-                      {isNextMonth
-                        ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidElectricCurrent || 0) > 0
-                          ? 'Utilidad de Electricidad (Balance Actual):'
-                          : 'Utilidad de Electricidad:')
-                        : 'Balance Pendiente de Electricidad (LUMA / AEE):'}
-                    </span>
+                    <span>Utilidad de Electricidad (Balance Actual):</span>
                     <span className="font-medium">
-                      {formatCurrency(isNextMonth ? electricAmount : activeStatus.pendingElectricBalance, admin.currencySymbol)}
+                      {formatCurrency(pendingElectric, admin.currencySymbol)}
                     </span>
                   </div>
                 )}
                 {property.utilitiesMaintenanceActive && (
                   <div className="flex justify-between py-1 border-b border-slate-200 text-purple-800">
-                    <span>
-                      {isNextMonth
-                        ? (nextPeriodInfo?.hasUnpaidUtilities && (nextPeriodInfo?.unpaidMaintenanceCurrent || 0) > 0
-                          ? 'Cuota de Mantenimiento (Balance Actual):'
-                          : 'Cuota de Mantenimiento:')
-                        : 'Balance Pendiente de Mantenimiento:'}
-                    </span>
+                    <span>Cuota de Mantenimiento (Balance Actual):</span>
                     <span className="font-medium">
-                      {formatCurrency(isNextMonth ? maintenanceAmount : activeStatus.pendingMaintenanceBalance, admin.currencySymbol)}
+                      {formatCurrency(pendingMaintenance, admin.currencySymbol)}
                     </span>
                   </div>
                 )}
 
-                {prevBalance > 0 && !isPaymentReceipt && (
+                {priorRentBalance > 0 && !isPaymentReceipt && (
                   <div className="flex justify-between py-1 border-b border-slate-200 text-amber-800">
-                    <span>{isNextMonth ? 'Saldo acumulado previo:' : 'Balances atrasados no pagados:'}</span>
-                    <span className="font-medium">{formatCurrency(prevBalance, admin.currencySymbol)}</span>
+                    <span>
+                      {isNextMonth
+                        ? 'Balance pendiente de periodos previos por Renta y/o Moras:'
+                        : 'Balance pendiente de periodos previo por Renta y/o Cargos por pago moroso:'}
+                    </span>
+                    <span className="font-medium">{formatCurrency(priorRentBalance, admin.currencySymbol)}</span>
+                  </div>
+                )}
+                {priorRentCredit > 0 && !isPaymentReceipt && (
+                  <div className="flex justify-between py-1 border-b border-slate-200 text-emerald-700">
+                    <span>Crédito a favor de periodos anteriores:</span>
+                    <span className="font-medium">-{formatCurrency(priorRentCredit, admin.currencySymbol)}</span>
                   </div>
                 )}
                 {!isNextMonth && !isPaymentReceipt && (baseLateFee > 0 || dailyLateFee > 0) && (
                   <div className="flex justify-between py-1 border-b border-slate-200 text-rose-700">
-                    <span>Recargos por mora:</span>
+                    <span>Recargos por mora del mes:</span>
                     <span className="font-medium">{formatCurrency(baseLateFee + dailyLateFee, admin.currencySymbol)}</span>
                   </div>
                 )}
-                {paidAmount > 0 && !isPaymentReceipt && (
+                {!isNextMonth && !isPaymentReceipt && directCyclePaidAmount > 0 && (
                   <div className="flex justify-between py-1 border-b border-slate-200 text-emerald-700">
-                    <span>{isNextMonth ? 'Abonos anticipados:' : 'Abonos realizados:'}</span>
-                    <span className="font-medium">-{formatCurrency(paidAmount, admin.currencySymbol)}</span>
+                    <span>Abonos realizados en el periodo:</span>
+                    <span className="font-medium">-{formatCurrency(directCyclePaidAmount, admin.currencySymbol)}</span>
+                  </div>
+                )}
+                {isNextMonth && advancePaymentsNextMonth > 0 && (
+                  <div className="flex justify-between py-1 border-b border-slate-200 text-emerald-700">
+                    <span>Abonos anticipados registrados:</span>
+                    <span className="font-medium">-{formatCurrency(advancePaymentsNextMonth, admin.currencySymbol)}</span>
                   </div>
                 )}
 

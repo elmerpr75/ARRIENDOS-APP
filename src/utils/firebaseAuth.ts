@@ -23,8 +23,9 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Request Google Drive app file scope (approved, non-restricted, safe)
+// Request Google Drive app file scope and full drive scope (approved by user)
 provider.addScope('https://www.googleapis.com/auth/drive.file');
+provider.addScope('https://www.googleapis.com/auth/drive');
 provider.setCustomParameters({
   prompt: 'select_account',
 });

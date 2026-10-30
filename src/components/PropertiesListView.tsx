@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Property, Payment, PropertyFinancialStatus, Administrator, Expense } from '../types';
 import { calculatePropertyStatus, formatCurrency, formatDate } from '../utils/calculations';
 import { getAdministratorForProperty } from '../utils/storage';
@@ -68,9 +68,11 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
 }) => {
   const [selectedTenants, setSelectedTenants] = useState<string[]>([]);
   const [isTenantDropdownOpen, setIsTenantDropdownOpen] = useState<boolean>(false);
+  const [selectedPropertyIdentifiers, setSelectedPropertyIdentifiers] = useState<string[]>([]);
+  const [isPropertyDropdownOpen, setIsPropertyDropdownOpen] = useState<boolean>(false);
   const [propertyStatusFilter, setPropertyStatusFilter] = useState<string>('all');
   const [propertySearch, setPropertySearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'overdue' | 'renewing' | 'paid'>('all');
+  const [filter, setFilter] = useState<'all' | 'overdue' | 'pending_balance' | 'renewing' | 'paid'>('all');
   const [adminFilter, setAdminFilter] = useState<string>('all');
   const [propertyToDelete, setPropertyToDelete] = useState<Property | null>(null);
   const [selectingAdminForProp, setSelectingAdminForProp] = useState<Property | null>(null);
@@ -85,14 +87,77 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
 
   const propertyStatuses = properties.map((p) => calculatePropertyStatus(p, payments));
 
-  // Extract unique tenant names for multi-select dropdown
-  const allTenants: string[] = Array.from(
+  // Extract unique tenant names for multi-select dropdown, ordered A to Z
+  const allTenants: string[] = Array.from<string>(
     new Set(
       properties
         .flatMap((p) => [p.tenant1.name, p.tenant2?.name || ''])
         .filter((n): n is string => Boolean(n && n.trim()))
     )
-  );
+  ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  // Compute available property identifiers matching all OTHER active filters, ordered A to Z (ascending alphabetical order)
+  const availablePropertyIdentifiers: string[] = useMemo(() => {
+    const pTerm = propertySearch.trim().toLowerCase();
+    const uniqueIdentifiers = new Set<string>();
+
+    propertyStatuses.forEach((s) => {
+      const prop = s.property;
+
+      const matchesTenant =
+        selectedTenants.length === 0 ||
+        selectedTenants.some(
+          (tName) =>
+            prop.tenant1.name.toLowerCase() === tName.toLowerCase() ||
+            (prop.tenant2?.name || '').toLowerCase() === tName.toLowerCase()
+        );
+
+      const matchesPropertyStatus =
+        propertyStatusFilter === 'all' ||
+        (prop.status || 'rentado') === propertyStatusFilter;
+
+      const matchesPropertySearch =
+        !pTerm ||
+        prop.propertyIdentifier.toLowerCase().includes(pTerm) ||
+        prop.address.toLowerCase().includes(pTerm) ||
+        prop.tenant1.name.toLowerCase().includes(pTerm) ||
+        (prop.tenant2?.name || '').toLowerCase().includes(pTerm);
+
+      let matchesFilter = true;
+      if (filter === 'overdue') {
+        matchesFilter = s.isOverdue;
+      } else if (filter === 'pending_balance') {
+        matchesFilter = s.totalPendingBalance > 0;
+      } else if (filter === 'renewing') {
+        matchesFilter = s.contractDaysLeft <= 60;
+      } else if (filter === 'paid') {
+        matchesFilter = s.totalPendingBalance <= 0;
+      }
+
+      let matchesAdmin = true;
+      if (adminFilter !== 'all') {
+        const defaultId = administrators[0]?.id || 'admin-1';
+        matchesAdmin = (prop.administratorId || defaultId) === adminFilter;
+      }
+
+      if (matchesTenant && matchesPropertyStatus && matchesPropertySearch && matchesFilter && matchesAdmin) {
+        if (prop.propertyIdentifier && prop.propertyIdentifier.trim() !== '') {
+          uniqueIdentifiers.add(prop.propertyIdentifier);
+        }
+      }
+    });
+
+    // Ordenados de la A a la Z (ascendente)
+    return Array.from(uniqueIdentifiers).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+  }, [
+    propertyStatuses,
+    selectedTenants,
+    propertyStatusFilter,
+    propertySearch,
+    filter,
+    adminFilter,
+    administrators,
+  ]);
 
   const handleOpenQuickUtilities = (prop: Property) => {
     setEditingUtilitiesProp(prop);
@@ -120,6 +185,10 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
     const prop = s.property;
     const pTerm = propertySearch.trim().toLowerCase();
 
+    const matchesPropertyIdentifier =
+      selectedPropertyIdentifiers.length === 0 ||
+      selectedPropertyIdentifiers.includes(prop.propertyIdentifier);
+
     const matchesTenant =
       selectedTenants.length === 0 ||
       selectedTenants.some(
@@ -135,11 +204,15 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
     const matchesProperty =
       !pTerm ||
       prop.propertyIdentifier.toLowerCase().includes(pTerm) ||
-      prop.address.toLowerCase().includes(pTerm);
+      prop.address.toLowerCase().includes(pTerm) ||
+      prop.tenant1.name.toLowerCase().includes(pTerm) ||
+      (prop.tenant2?.name || '').toLowerCase().includes(pTerm);
 
     let matchesFilter = true;
     if (filter === 'overdue') {
       matchesFilter = s.isOverdue;
+    } else if (filter === 'pending_balance') {
+      matchesFilter = s.totalPendingBalance > 0;
     } else if (filter === 'renewing') {
       matchesFilter = s.contractDaysLeft <= 60;
     } else if (filter === 'paid') {
@@ -152,7 +225,7 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
       matchesAdmin = (prop.administratorId || defaultId) === adminFilter;
     }
 
-    return matchesTenant && matchesPropertyStatus && matchesProperty && matchesFilter && matchesAdmin;
+    return matchesPropertyIdentifier && matchesTenant && matchesPropertyStatus && matchesProperty && matchesFilter && matchesAdmin;
   });
 
   const cleanPhone = (phoneStr: string) => phoneStr.replace(/[^0-9]/g, '');
@@ -256,21 +329,116 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
           </div>
         )}
 
-        {/* Tenant Checkbox Dropdown & Property Status Filter Row */}
+        {/* Property & Tenant Checkbox Dropdown & Property Status Filter Row */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
           <div className="flex flex-wrap items-center gap-2">
+            {/* Multi-Select Property Dropdown (Nombres de Propiedad - Z a A) */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPropertyDropdownOpen(!isPropertyDropdownOpen);
+                  if (isTenantDropdownOpen) setIsTenantDropdownOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer border ${
+                  selectedPropertyIdentifiers.length > 0
+                    ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
+                    : 'bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 text-sky-900 dark:text-sky-200 border-sky-200 dark:border-slate-700'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {selectedPropertyIdentifiers.length === 0
+                    ? 'Filtrar por Propiedad (Todas) ▾'
+                    : `${selectedPropertyIdentifiers.length} propiedad(es) ▾`}
+                </span>
+              </button>
+
+              {isPropertyDropdownOpen && (
+                <div className="absolute left-0 mt-1.5 w-72 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-3 z-30 space-y-2">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800 text-[11px]">
+                    <span className="font-bold text-slate-700 dark:text-slate-200">
+                      Propiedades ({availablePropertyIdentifiers.length})
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {availablePropertyIdentifiers.length > 0 && selectedPropertyIdentifiers.length < availablePropertyIdentifiers.length && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPropertyIdentifiers([...availablePropertyIdentifiers])}
+                          className="text-sky-600 dark:text-sky-400 hover:underline font-semibold"
+                        >
+                          Todas
+                        </button>
+                      )}
+                      {selectedPropertyIdentifiers.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPropertyIdentifiers([])}
+                          className="text-rose-500 hover:underline font-semibold"
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
+                    {availablePropertyIdentifiers.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 p-2 text-center italic">
+                        No hay propiedades que cumplan los demás filtros activos.
+                      </p>
+                    ) : (
+                      availablePropertyIdentifiers.map((propIdentifier) => {
+                        const isChecked = selectedPropertyIdentifiers.includes(propIdentifier);
+                        return (
+                          <label
+                            key={propIdentifier}
+                            className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-xs cursor-pointer select-none"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedPropertyIdentifiers([...selectedPropertyIdentifiers, propIdentifier]);
+                                } else {
+                                  setSelectedPropertyIdentifiers(
+                                    selectedPropertyIdentifiers.filter((p) => p !== propIdentifier)
+                                  );
+                                }
+                              }}
+                              className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 border-slate-300 dark:border-slate-700"
+                            />
+                            <span className="text-slate-800 dark:text-slate-200 font-medium truncate">
+                              {propIdentifier}
+                            </span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Tenant Multi-Select Dropdown with Checkboxes */}
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setIsTenantDropdownOpen(!isTenantDropdownOpen)}
-                className="px-3 py-1.5 bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 text-sky-900 dark:text-sky-200 rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer border border-sky-200 dark:border-slate-700"
+                onClick={() => {
+                  setIsTenantDropdownOpen(!isTenantDropdownOpen);
+                  if (isPropertyDropdownOpen) setIsPropertyDropdownOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer border ${
+                  selectedTenants.length > 0
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                    : 'bg-sky-50 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 text-sky-900 dark:text-sky-200 border-sky-200 dark:border-slate-700'
+                }`}
               >
-                <User className="w-3.5 h-3.5 text-sky-600" />
+                <User className="w-3.5 h-3.5 shrink-0" />
                 <span>
                   {selectedTenants.length === 0
                     ? 'Filtrar por Inquilinos (Todos) ▾'
-                    : `${selectedTenants.length} inquilino(s) seleccionado(s) ▾`}
+                    : `${selectedTenants.length} inquilino(s) ▾`}
                 </span>
               </button>
 
@@ -359,6 +527,16 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
               Con Mora ({propertyStatuses.filter((s) => s.isOverdue).length})
             </button>
             <button
+              onClick={() => setFilter('pending_balance')}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer ${
+                filter === 'pending_balance'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+              }`}
+            >
+              Con Balance Pendiente ({propertyStatuses.filter((s) => s.totalPendingBalance > 0).length})
+            </button>
+            <button
               onClick={() => setFilter('renewing')}
               className={`px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer ${
                 filter === 'renewing'
@@ -380,6 +558,61 @@ export const PropertiesListView: React.FC<PropertiesListViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Active Filter Chips / Badges */}
+        {(selectedPropertyIdentifiers.length > 0 || selectedTenants.length > 0 || propertyStatusFilter !== 'all' || adminFilter !== 'all' || filter !== 'all' || propertySearch.trim() !== '') && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+            <span className="text-slate-400 font-semibold flex items-center gap-1">
+              Filtros activos:
+            </span>
+            {selectedPropertyIdentifiers.map((pName) => (
+              <span
+                key={`chip-prop-${pName}`}
+                className="px-2 py-0.5 rounded-lg bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 font-medium flex items-center gap-1"
+              >
+                <span>🏢 {pName}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPropertyIdentifiers(selectedPropertyIdentifiers.filter((n) => n !== pName))}
+                  className="hover:text-rose-600 transition"
+                  title="Quitar este filtro"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {selectedTenants.map((tName) => (
+              <span
+                key={`chip-tenant-${tName}`}
+                className="px-2 py-0.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 font-medium flex items-center gap-1"
+              >
+                <span>👤 {tName}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTenants(selectedTenants.filter((n) => n !== tName))}
+                  className="hover:text-rose-600 transition"
+                  title="Quitar este filtro"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedPropertyIdentifiers([]);
+                setSelectedTenants([]);
+                setPropertyStatusFilter('all');
+                setAdminFilter('all');
+                setFilter('all');
+                setPropertySearch('');
+              }}
+              className="text-rose-500 hover:underline font-semibold ml-1 cursor-pointer"
+            >
+              Borrar todos los filtros
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Properties Grid */}

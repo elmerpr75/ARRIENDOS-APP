@@ -1405,19 +1405,6 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           .filter((p) => (p.appliedToMaintenance || (p.concept === 'mantenimiento' ? p.amount : 0)) > 0)
           .map((p) => formatDate(p.date));
 
-        // Total accumulated rent and late fee debt
-        const totalAccumulatedRentAndFees = status.pendingRentBalance + status.pendingLateFeesBalance;
-
-        // Total accumulated utilities debt (strictly segregated from rent)
-        const totalAccumulatedUtilities = status.pendingUtilitiesBalance;
-
-        // Total property pending according to selected concept filters
-        const totalPropertyPending =
-          (includeRent ? totalAccumulatedRentAndFees : 0) +
-          (includeWater && property.utilitiesWaterActive ? status.pendingWaterBalance : 0) +
-          (includeElectric && property.utilitiesElectricActive ? status.pendingElectricBalance : 0) +
-          (includeMaintenance && property.utilitiesMaintenanceActive ? status.pendingMaintenanceBalance : 0);
-
         // Filter expenses for this property
         const propExpenses = (expenses || []).filter((e) => {
           if (e.propertyId !== property.id) return false;
@@ -1458,6 +1445,19 @@ export const AccountingAuditView: React.FC<AccountingAuditViewProps> = ({
           showHistory ? (historyStartDate.trim() ? historyStartDate : undefined) : undefined,
           showHistory ? (historyEndDate.trim() ? historyEndDate : undefined) : undefined
         );
+
+        // Total accumulated rent and late fee debt from audited ledger (matches Balance Calculado column)
+        const totalAccumulatedRentAndFees = Math.max(0, historyData.rentFinalBalance);
+
+        // Total accumulated utilities debt (strictly segregated from rent, matching audited ledger)
+        const totalAccumulatedUtilities =
+          (includeWater && property.utilitiesWaterActive ? Math.max(0, historyData.waterFinalBalance) : 0) +
+          (includeElectric && property.utilitiesElectricActive ? Math.max(0, historyData.electricFinalBalance) : 0) +
+          (includeMaintenance && property.utilitiesMaintenanceActive ? Math.max(0, historyData.maintenanceFinalBalance) : 0);
+
+        // Total property pending according to selected concept filters
+        const totalPropertyPending =
+          (includeRent ? totalAccumulatedRentAndFees : 0) + totalAccumulatedUtilities;
 
         const effectivePropertyPending = showHistory
           ? historyData.grandFinalBalance
